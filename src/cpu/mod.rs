@@ -6,6 +6,13 @@ async fn memory_read(address: u16) -> u8 {
     with_state(|state| state.memory[address as usize])
 }
 
+async fn memory_write(address: u16, value: u8) {
+    sleep(4).await; // Memory write takes 4 cycles
+    with_state_mut(|state| {
+        state.memory[address as usize] = value;
+    });
+}
+
 async fn fetch() -> u8 {
     let pc = with_state(|state| state.cpu.pc);
     
@@ -64,6 +71,30 @@ async fn execute_ld_r_hl(opcode: u8) {
     });
 }
 
+async fn execute_ld_hl_r(opcode: u8) {
+    // Get HL address
+    let hl_addr = with_state(|state| state.cpu.hl());
+    
+    // Decode which register based on opcode bits 2-0
+    let reg_bits = opcode & 0b111;
+    
+    let value = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b, // LD (HL), B (0x70)
+            0b001 => state.cpu.c, // LD (HL), C (0x71)
+            0b010 => state.cpu.d, // LD (HL), D (0x72)
+            0b011 => state.cpu.e, // LD (HL), E (0x73)
+            0b100 => state.cpu.h, // LD (HL), H (0x74)
+            0b101 => state.cpu.l, // LD (HL), L (0x75)
+            0b111 => state.cpu.a, // LD (HL), A (0x77)
+            _ => panic!("Invalid LD (HL),r opcode: 0x{:02X}", opcode),
+        }
+    });
+    
+    // Write data to memory at HL address (second M-cycle)
+    memory_write(hl_addr, value).await;
+}
+
 async fn decode_and_execute(opcode: u8) {
     match opcode {
         // LD r, n instructions (0b00xxx110)
@@ -73,6 +104,10 @@ async fn decode_and_execute(opcode: u8) {
         // LD r, (HL) instructions (0b01xxx110)
         0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
             execute_ld_r_hl(opcode).await;
+        }
+        // LD (HL), r instructions (0b01110xxx)
+        0x70 | 0x71 | 0x72 | 0x73 | 0x74 | 0x75 | 0x77 => {
+            execute_ld_hl_r(opcode).await;
         }
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
