@@ -155,6 +155,105 @@ async fn execute_ld_a_nn() {
     });
 }
 
+async fn execute_ld_nn_a() {
+    // LD (nn), A - 4 M-cycles total
+    // M2: Read LSB of address
+    let nn_lsb = fetch().await;
+    // M3: Read MSB of address
+    let nn_msb = fetch().await;
+    // Construct 16-bit address
+    let nn = ((nn_msb as u16) << 8) | (nn_lsb as u16);
+    // M4: Write A to memory at nn address
+    let a_value = with_state(|state| state.cpu.a);
+    memory_write(nn, a_value).await;
+}
+
+async fn execute_ldh_a_c() {
+    // LDH A, (C) - 2 M-cycles total
+    // M2: Read from memory at 0xFF00+C address
+    let c_value = with_state(|state| state.cpu.c);
+    let address = 0xFF00 | (c_value as u16);
+    let value = memory_read(address).await;
+    with_state_mut(|state| {
+        state.cpu.a = value;
+    });
+}
+
+async fn execute_ldh_c_a() {
+    // LDH (C), A - 2 M-cycles total
+    // M2: Write A to memory at 0xFF00+C address
+    let c_value = with_state(|state| state.cpu.c);
+    let address = 0xFF00 | (c_value as u16);
+    let a_value = with_state(|state| state.cpu.a);
+    memory_write(address, a_value).await;
+}
+
+async fn execute_ldh_a_n() {
+    // LDH A, (n) - 3 M-cycles total
+    // M2: Read immediate value n
+    let n = fetch().await;
+    // M3: Read from memory at 0xFF00+n address
+    let address = 0xFF00 | (n as u16);
+    let value = memory_read(address).await;
+    with_state_mut(|state| {
+        state.cpu.a = value;
+    });
+}
+
+async fn execute_ldh_n_a() {
+    // LDH (n), A - 3 M-cycles total
+    // M2: Read immediate value n
+    let n = fetch().await;
+    // M3: Write A to memory at 0xFF00+n address
+    let address = 0xFF00 | (n as u16);
+    let a_value = with_state(|state| state.cpu.a);
+    memory_write(address, a_value).await;
+}
+
+async fn execute_ld_a_hl_dec() {
+    // LD A, (HL-) - 2 M-cycles total
+    // M2: Read from memory at HL address, then decrement HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let value = memory_read(hl_addr).await;
+    with_state_mut(|state| {
+        state.cpu.a = value;
+        state.cpu.set_hl(hl_addr.wrapping_sub(1));
+    });
+}
+
+async fn execute_ld_hl_dec_a() {
+    // LD (HL-), A - 2 M-cycles total
+    // M2: Write A to memory at HL address, then decrement HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let a_value = with_state(|state| state.cpu.a);
+    memory_write(hl_addr, a_value).await;
+    with_state_mut(|state| {
+        state.cpu.set_hl(hl_addr.wrapping_sub(1));
+    });
+}
+
+async fn execute_ld_a_hl_inc() {
+    // LD A, (HL+) - 2 M-cycles total
+    // M2: Read from memory at HL address, then increment HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let value = memory_read(hl_addr).await;
+    with_state_mut(|state| {
+        state.cpu.a = value;
+        state.cpu.set_hl(hl_addr.wrapping_add(1));
+    });
+}
+
+async fn execute_ld_hl_inc_a() {
+    // LD (HL+), A - 2 M-cycles total
+    // M2: Write A to memory at HL address, then increment HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let a_value = with_state(|state| state.cpu.a);
+    memory_write(hl_addr, a_value).await;
+    with_state_mut(|state| {
+        state.cpu.set_hl(hl_addr.wrapping_add(1));
+    });
+}
+
 async fn decode_and_execute(opcode: u8) {
     match opcode {
         // LD r, n instructions (0b00xxx110)
@@ -169,13 +268,23 @@ async fn decode_and_execute(opcode: u8) {
         0x70 | 0x71 | 0x72 | 0x73 | 0x74 | 0x75 | 0x77 => {
             execute_ld_hl_r(opcode).await;
         }
-        // New load instructions
+        // Load instructions from previous batch
         0x36 => execute_ld_hl_n().await,        // LD (HL), n
         0x0A => execute_ld_a_bc().await,        // LD A, (BC)
         0x1A => execute_ld_a_de().await,        // LD A, (DE)
         0x02 => execute_ld_bc_a().await,        // LD (BC), A
         0x12 => execute_ld_de_a().await,        // LD (DE), A
         0xFA => execute_ld_a_nn().await,        // LD A, (nn)
+        // Final batch of load instructions
+        0xEA => execute_ld_nn_a().await,        // LD (nn), A
+        0xF2 => execute_ldh_a_c().await,        // LDH A, (C)
+        0xE2 => execute_ldh_c_a().await,        // LDH (C), A
+        0xF0 => execute_ldh_a_n().await,        // LDH A, (n)
+        0xE0 => execute_ldh_n_a().await,        // LDH (n), A
+        0x3A => execute_ld_a_hl_dec().await,    // LD A, (HL-)
+        0x32 => execute_ld_hl_dec_a().await,    // LD (HL-), A
+        0x2A => execute_ld_a_hl_inc().await,    // LD A, (HL+)
+        0x22 => execute_ld_hl_inc_a().await,    // LD (HL+), A
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
