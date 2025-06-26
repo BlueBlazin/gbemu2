@@ -95,6 +95,66 @@ async fn execute_ld_hl_r(opcode: u8) {
     memory_write(hl_addr, value).await;
 }
 
+async fn execute_ld_hl_n() {
+    // LD (HL), n - 3 M-cycles total
+    // M2: Read immediate value
+    let value = fetch().await;
+    // M3: Write to memory at HL address
+    let hl_addr = with_state(|state| state.cpu.hl());
+    memory_write(hl_addr, value).await;
+}
+
+async fn execute_ld_a_bc() {
+    // LD A, (BC) - 2 M-cycles total
+    // M2: Read from memory at BC address
+    let bc_addr = with_state(|state| state.cpu.bc());
+    let value = memory_read(bc_addr).await;
+    with_state_mut(|state| {
+        state.cpu.a = value;
+    });
+}
+
+async fn execute_ld_a_de() {
+    // LD A, (DE) - 2 M-cycles total
+    // M2: Read from memory at DE address
+    let de_addr = with_state(|state| state.cpu.de());
+    let value = memory_read(de_addr).await;
+    with_state_mut(|state| {
+        state.cpu.a = value;
+    });
+}
+
+async fn execute_ld_bc_a() {
+    // LD (BC), A - 2 M-cycles total
+    // M2: Write A to memory at BC address
+    let bc_addr = with_state(|state| state.cpu.bc());
+    let a_value = with_state(|state| state.cpu.a);
+    memory_write(bc_addr, a_value).await;
+}
+
+async fn execute_ld_de_a() {
+    // LD (DE), A - 2 M-cycles total
+    // M2: Write A to memory at DE address
+    let de_addr = with_state(|state| state.cpu.de());
+    let a_value = with_state(|state| state.cpu.a);
+    memory_write(de_addr, a_value).await;
+}
+
+async fn execute_ld_a_nn() {
+    // LD A, (nn) - 4 M-cycles total
+    // M2: Read LSB of address
+    let nn_lsb = fetch().await;
+    // M3: Read MSB of address
+    let nn_msb = fetch().await;
+    // Construct 16-bit address
+    let nn = ((nn_msb as u16) << 8) | (nn_lsb as u16);
+    // M4: Read from memory at nn address
+    let value = memory_read(nn).await;
+    with_state_mut(|state| {
+        state.cpu.a = value;
+    });
+}
+
 async fn decode_and_execute(opcode: u8) {
     match opcode {
         // LD r, n instructions (0b00xxx110)
@@ -109,6 +169,13 @@ async fn decode_and_execute(opcode: u8) {
         0x70 | 0x71 | 0x72 | 0x73 | 0x74 | 0x75 | 0x77 => {
             execute_ld_hl_r(opcode).await;
         }
+        // New load instructions
+        0x36 => execute_ld_hl_n().await,        // LD (HL), n
+        0x0A => execute_ld_a_bc().await,        // LD A, (BC)
+        0x1A => execute_ld_a_de().await,        // LD A, (DE)
+        0x02 => execute_ld_bc_a().await,        // LD (BC), A
+        0x12 => execute_ld_de_a().await,        // LD (DE), A
+        0xFA => execute_ld_a_nn().await,        // LD A, (nn)
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
