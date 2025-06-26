@@ -48,7 +48,11 @@ The heart of the emulator's timing system:
 
 #### CPU Implementation (`src/cpu/mod.rs`)
 - Implements fetch-decode-execute cycle with proper Game Boy timing
-- Complete 8-bit load instruction set (LD r,n; LD r,(HL); LD (HL),r; LDH; etc.)
+- **Instruction Sets Implemented:**
+  - Complete 8-bit load instructions (LD r,n; LD r,(HL); LD (HL),r; LDH; etc.)
+  - Complete 16-bit load instructions (LD rr,nn; PUSH/POP; LD SP,HL; etc.)
+  - Complete 8-bit arithmetic (ADD/ADC/SUB/SBC with register/immediate/(HL) variants)
+- **Helper Functions:** `add_8bit()` and `sub_8bit()` handle flag calculations (Z,N,H,C)
 - Memory operations: `memory_read()` and `memory_write()` take 4 cycles each
 - All instructions follow official Game Boy timing specifications
 
@@ -77,3 +81,9 @@ The driver automatically handles scheduling and ensures components wake up at th
 - Only dependency is `futures = "0.3.31"`
 - Thread-local storage is used for cycle tracking to avoid passing state between async contexts
 - The BTreeMap in the driver ensures futures are processed in chronological order
+
+## Current Status & Next Steps
+
+**Completed:** 8-bit/16-bit loads, 8-bit arithmetic (ADD/ADC/SUB/SBC), stack operations, flag handling
+**Next:** Logical instructions (AND/OR/XOR/CP), bit operations, jumps/calls, interrupts
+**Pattern:** Register ops use bits 2-0, immediate ops have dedicated opcodes, (HL) variants embedded in register patterns at bit pattern 110
