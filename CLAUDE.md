@@ -41,11 +41,16 @@ The heart of the emulator's timing system:
 - Thread-local storage tracks current cycle and wake times
 - Components are spawned as async tasks and scheduled based on their timing requirements
 
-#### State Management (`src/state.rs`)
-Currently empty but intended to hold the central state structure that all components will read from and write to.
+#### State Management (`src/state.rs`, `src/emulator.rs`)
+- `EmulatorState` contains CPU registers and 64KB memory array
+- `CpuState` has all Game Boy registers with 8/16-bit access methods and flag operations
+- `emulator.rs` provides `with_state()` and `with_state_mut()` for shared state access across components
 
 #### CPU Implementation (`src/cpu/mod.rs`)
-Placeholder for the CPU emulation logic that will use async functions to implement instruction execution with proper timing.
+- Implements fetch-decode-execute cycle with proper Game Boy timing
+- Complete 8-bit load instruction set (LD r,n; LD r,(HL); LD (HL),r; LDH; etc.)
+- Memory operations: `memory_read()` and `memory_write()` take 4 cycles each
+- All instructions follow official Game Boy timing specifications
 
 ### Async Pattern Usage
 Components follow this pattern:
@@ -53,6 +58,14 @@ Components follow this pattern:
 async fn component_name() {
     sleep(cycles).await;  // Wait for specific number of cycles
     // Component logic here
+}
+```
+
+Memory access pattern:
+```rust
+async fn memory_read(address: u16) -> u8 {
+    sleep(4).await; // 4 cycles for memory access
+    with_state(|state| state.memory[address as usize])
 }
 ```
 
