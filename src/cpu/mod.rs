@@ -912,6 +912,210 @@ async fn execute_and_n() {
     });
 }
 
+async fn execute_or_r(opcode: u8) {
+    // OR r - 1 or 2 M-cycles total depending on operand
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // OR (HL) - 2 M-cycles total
+        execute_or_hl().await;
+        return;
+    }
+
+    let (a_val, operand) = with_state(|state| {
+        let a = state.cpu.a;
+        let op = match reg_bits {
+            0b000 => state.cpu.b, // OR B (0xB0)
+            0b001 => state.cpu.c, // OR C (0xB1)
+            0b010 => state.cpu.d, // OR D (0xB2)
+            0b011 => state.cpu.e, // OR E (0xB3)
+            0b100 => state.cpu.h, // OR H (0xB4)
+            0b101 => state.cpu.l, // OR L (0xB5)
+            0b111 => state.cpu.a, // OR A (0xB7)
+            _ => unreachable!(),
+        };
+        (a, op)
+    });
+
+    let result = a_val | operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // OR sets Z=result==0, N=0, H=0, C=0
+        state.cpu.set_flags(zero, false, false, false);
+    });
+}
+
+async fn execute_or_hl() {
+    // OR (HL) - 2 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let operand = memory_read(hl_addr).await;
+
+    let a_val = with_state(|state| state.cpu.a);
+    let result = a_val | operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // OR sets Z=result==0, N=0, H=0, C=0
+        state.cpu.set_flags(zero, false, false, false);
+    });
+}
+
+async fn execute_or_n() {
+    // OR n - 2 M-cycles total
+    // M2: Read immediate value
+    let operand = fetch().await;
+
+    let a_val = with_state(|state| state.cpu.a);
+    let result = a_val | operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // OR sets Z=result==0, N=0, H=0, C=0
+        state.cpu.set_flags(zero, false, false, false);
+    });
+}
+
+async fn execute_xor_r(opcode: u8) {
+    // XOR r - 1 or 2 M-cycles total depending on operand
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // XOR (HL) - 2 M-cycles total
+        execute_xor_hl().await;
+        return;
+    }
+
+    let (a_val, operand) = with_state(|state| {
+        let a = state.cpu.a;
+        let op = match reg_bits {
+            0b000 => state.cpu.b, // XOR B (0xA8)
+            0b001 => state.cpu.c, // XOR C (0xA9)
+            0b010 => state.cpu.d, // XOR D (0xAA)
+            0b011 => state.cpu.e, // XOR E (0xAB)
+            0b100 => state.cpu.h, // XOR H (0xAC)
+            0b101 => state.cpu.l, // XOR L (0xAD)
+            0b111 => state.cpu.a, // XOR A (0xAF)
+            _ => unreachable!(),
+        };
+        (a, op)
+    });
+
+    let result = a_val ^ operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // XOR sets Z=result==0, N=0, H=0, C=0
+        state.cpu.set_flags(zero, false, false, false);
+    });
+}
+
+async fn execute_xor_hl() {
+    // XOR (HL) - 2 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let operand = memory_read(hl_addr).await;
+
+    let a_val = with_state(|state| state.cpu.a);
+    let result = a_val ^ operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // XOR sets Z=result==0, N=0, H=0, C=0
+        state.cpu.set_flags(zero, false, false, false);
+    });
+}
+
+async fn execute_xor_n() {
+    // XOR n - 2 M-cycles total
+    // M2: Read immediate value
+    let operand = fetch().await;
+
+    let a_val = with_state(|state| state.cpu.a);
+    let result = a_val ^ operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // XOR sets Z=result==0, N=0, H=0, C=0
+        state.cpu.set_flags(zero, false, false, false);
+    });
+}
+
+async fn execute_ccf() {
+    // CCF - 1 M-cycle total
+    // Complement carry flag, clear N and H flags
+    with_state_mut(|state| {
+        let current_z = state.cpu.flag_z();
+        let current_c = state.cpu.flag_c();
+        // Flip carry flag, clear N and H, preserve Z
+        state.cpu.set_flags(current_z, false, false, !current_c);
+    });
+}
+
+async fn execute_scf() {
+    // SCF - 1 M-cycle total
+    // Set carry flag, clear N and H flags
+    with_state_mut(|state| {
+        let current_z = state.cpu.flag_z();
+        // Set carry flag, clear N and H, preserve Z
+        state.cpu.set_flags(current_z, false, false, true);
+    });
+}
+
+async fn execute_daa() {
+    // DAA - 1 M-cycle total
+    // Decimal adjust accumulator
+    with_state_mut(|state| {
+        let mut a = state.cpu.a as u16;
+
+        if !state.cpu.flag_n() {
+            // Previous operation was addition
+            if state.cpu.flag_h() || (a & 0xF) > 0x9 {
+                a = a.wrapping_add(0x6);
+            }
+            if state.cpu.flag_c() || a > 0x9F {
+                a = a.wrapping_add(0x60);
+                state.cpu.set_flag_c(true);
+            } else {
+                state.cpu.set_flag_c(false);
+            }
+        } else {
+            // Previous operation was subtraction
+            if state.cpu.flag_h() {
+                a = a.wrapping_sub(0x6);
+            }
+            if state.cpu.flag_c() {
+                a = a.wrapping_sub(0x60);
+            }
+        }
+
+        let result = (a & 0xFF) as u8;
+        state.cpu.a = result;
+        state.cpu.set_flag_z(result == 0);
+        state.cpu.set_flag_h(false);
+        // Carry flag was already set above if needed
+    });
+}
+
+async fn execute_cpl() {
+    // CPL - 1 M-cycle total
+    // Complement accumulator, set N and H flags
+    with_state_mut(|state| {
+        state.cpu.a = !state.cpu.a;
+        let current_z = state.cpu.flag_z();
+        let current_c = state.cpu.flag_c();
+        // Set N and H flags, preserve Z and C
+        state.cpu.set_flags(current_z, true, true, current_c);
+    });
+}
+
 async fn decode_and_execute(opcode: u8) {
     match opcode {
         // LD r, n instructions (0b00xxx110)
@@ -958,16 +1162,25 @@ async fn decode_and_execute(opcode: u8) {
         0xD6 => execute_sub_n().await,              // SUB n
         0x98..=0x9F => execute_sbc_r(opcode).await, // SBC r (includes SBC (HL) at 0x9E)
         0xDE => execute_sbc_n().await,              // SBC n
+        // Logical instructions (need to handle overlaps carefully)
+        0xA0..=0xA7 => execute_and_r(opcode).await, // AND r (includes AND (HL) at 0xA6)
+        0xE6 => execute_and_n().await,              // AND n
+        0xA8..=0xAF => execute_xor_r(opcode).await, // XOR r (includes XOR (HL) at 0xAE)
+        0xEE => execute_xor_n().await,              // XOR n
+        0xB0..=0xB7 => execute_or_r(opcode).await,  // OR r (includes OR (HL) at 0xB6)
+        0xF6 => execute_or_n().await,               // OR n
         0xB8..=0xBF => execute_cp_r(opcode).await,  // CP r (includes CP (HL) at 0xBE)
         0xFE => execute_cp_n().await,               // CP n
         // Increment/Decrement instructions
         0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x3C => execute_inc_r(opcode).await, // INC r
-        0x34 => execute_inc_hl().await,            // INC (HL)
+        0x34 => execute_inc_hl().await,                                                // INC (HL)
         0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x3D => execute_dec_r(opcode).await, // DEC r
-        0x35 => execute_dec_hl().await,            // DEC (HL)
-        // Logical instructions
-        0xA0..=0xA7 => execute_and_r(opcode).await, // AND r (includes AND (HL) at 0xA6)
-        0xE6 => execute_and_n().await,             // AND n
+        0x35 => execute_dec_hl().await,                                                // DEC (HL)
+        // Flag manipulation instructions
+        0x3F => execute_ccf().await, // CCF
+        0x37 => execute_scf().await, // SCF
+        0x27 => execute_daa().await, // DAA
+        0x2F => execute_cpl().await, // CPL
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
