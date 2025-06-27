@@ -134,7 +134,6 @@ impl CpuState {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct EmulatorState {
     pub cpu: CpuState,

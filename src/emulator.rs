@@ -7,14 +7,14 @@ thread_local! {
     static STATE: RefCell<EmulatorState> = RefCell::new(EmulatorState::new());
 }
 
-pub fn with_state<F, R>(f: F) -> R 
+pub fn with_state<F, R>(f: F) -> R
 where
     F: FnOnce(&EmulatorState) -> R,
 {
     STATE.with(|state| f(&*state.borrow()))
 }
 
-pub fn with_state_mut<F, R>(f: F) -> R 
+pub fn with_state_mut<F, R>(f: F) -> R
 where
     F: FnOnce(&mut EmulatorState) -> R,
 {
@@ -29,13 +29,13 @@ pub fn init_emulator() {
 
 pub fn run_emulator() {
     init_emulator();
-    
+
     let mut driver = Driver::new();
-    
+
     // Spawn CPU component
     driver.spawn(cpu::cpu());
-    
+
     // TODO: Add other components (PPU, APU, etc.)
-    
+
     driver.run();
 }
