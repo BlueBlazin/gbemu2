@@ -1116,6 +1116,129 @@ async fn execute_cpl() {
     });
 }
 
+async fn execute_inc_rr(opcode: u8) {
+    // INC rr - 2 M-cycles total
+    // M2: Internal operation (no memory access)
+    sleep(4).await;
+
+    // Decode which register pair based on opcode bits 5-4
+    let reg_bits = (opcode >> 4) & 0b11;
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b00 => {
+                let bc = state.cpu.bc().wrapping_add(1);
+                state.cpu.set_bc(bc);
+            } // INC BC (0x03)
+            0b01 => {
+                let de = state.cpu.de().wrapping_add(1);
+                state.cpu.set_de(de);
+            } // INC DE (0x13)
+            0b10 => {
+                let hl = state.cpu.hl().wrapping_add(1);
+                state.cpu.set_hl(hl);
+            } // INC HL (0x23)
+            0b11 => {
+                state.cpu.sp = state.cpu.sp.wrapping_add(1);
+            } // INC SP (0x33)
+            _ => unreachable!(),
+        }
+        // INC rr doesn't affect any flags
+    });
+}
+
+async fn execute_dec_rr(opcode: u8) {
+    // DEC rr - 2 M-cycles total
+    // M2: Internal operation (no memory access)
+    sleep(4).await;
+
+    // Decode which register pair based on opcode bits 5-4
+    let reg_bits = (opcode >> 4) & 0b11;
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b00 => {
+                let bc = state.cpu.bc().wrapping_sub(1);
+                state.cpu.set_bc(bc);
+            } // DEC BC (0x0B)
+            0b01 => {
+                let de = state.cpu.de().wrapping_sub(1);
+                state.cpu.set_de(de);
+            } // DEC DE (0x1B)
+            0b10 => {
+                let hl = state.cpu.hl().wrapping_sub(1);
+                state.cpu.set_hl(hl);
+            } // DEC HL (0x2B)
+            0b11 => {
+                state.cpu.sp = state.cpu.sp.wrapping_sub(1);
+            } // DEC SP (0x3B)
+            _ => unreachable!(),
+        }
+        // DEC rr doesn't affect any flags
+    });
+}
+
+async fn execute_add_hl_rr(opcode: u8) {
+    // ADD HL, rr - 2 M-cycles total
+    // M2: Internal operation (no memory access)
+    sleep(4).await;
+
+    // Decode which register pair based on opcode bits 5-4
+    let reg_bits = (opcode >> 4) & 0b11;
+
+    let (hl_val, operand, current_z) = with_state(|state| {
+        let hl = state.cpu.hl();
+        let op = match reg_bits {
+            0b00 => state.cpu.bc(), // ADD HL, BC (0x09)
+            0b01 => state.cpu.de(), // ADD HL, DE (0x19)
+            0b10 => state.cpu.hl(), // ADD HL, HL (0x29)
+            0b11 => state.cpu.sp,   // ADD HL, SP (0x39)
+            _ => unreachable!(),
+        };
+        (hl, op, state.cpu.flag_z())
+    });
+
+    // Calculate result and flags
+    let result = hl_val.wrapping_add(operand);
+    let full_result = (hl_val as u32) + (operand as u32);
+
+    // Half-carry occurs when there's a carry from bit 11 to bit 12
+    let half_carry = ((hl_val & 0xFFF) + (operand & 0xFFF)) > 0xFFF;
+    let carry = full_result > 0xFFFF;
+
+    with_state_mut(|state| {
+        state.cpu.set_hl(result);
+        // ADD HL,rr sets N=0, H=half_carry, C=carry, preserves Z
+        state.cpu.set_flags(current_z, false, half_carry, carry);
+    });
+}
+
+async fn execute_add_sp_e() {
+    // ADD SP, e - 4 M-cycles total
+    // M2: Read signed 8-bit offset
+    let e = fetch().await;
+
+    // M3: Internal operation
+    sleep(4).await;
+
+    // M4: Internal operation
+    sleep(4).await;
+
+    let sp = with_state(|state| state.cpu.sp);
+    let e_signed = e as i8 as i16 as u16;
+
+    // Calculate result and check for half-carry and carry on lower byte
+    let result = sp.wrapping_add(e_signed);
+    let half_carry = ((sp & 0xF) + (e_signed & 0xF)) > 0xF;
+    let carry = ((sp & 0xFF) + (e_signed & 0xFF)) > 0xFF;
+
+    with_state_mut(|state| {
+        state.cpu.sp = result;
+        // ADD SP,e sets Z=0, N=0, H=half_carry, C=carry
+        state.cpu.set_flags(false, false, half_carry, carry);
+    });
+}
+
 async fn decode_and_execute(opcode: u8) {
     match opcode {
         // LD r, n instructions (0b00xxx110)
@@ -1181,6 +1304,11 @@ async fn decode_and_execute(opcode: u8) {
         0x37 => execute_scf().await, // SCF
         0x27 => execute_daa().await, // DAA
         0x2F => execute_cpl().await, // CPL
+        // 16-bit arithmetic instructions
+        0x03 | 0x13 | 0x23 | 0x33 => execute_inc_rr(opcode).await, // INC rr
+        0x0B | 0x1B | 0x2B | 0x3B => execute_dec_rr(opcode).await, // DEC rr
+        0x09 | 0x19 | 0x29 | 0x39 => execute_add_hl_rr(opcode).await, // ADD HL,rr
+        0xE8 => execute_add_sp_e().await, // ADD SP,e
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
