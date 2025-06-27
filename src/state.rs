@@ -1,4 +1,5 @@
 use crate::mmu::MMU;
+use crate::ppu::PpuState;
 
 #[derive(Debug, Clone)]
 pub struct CpuState {
@@ -138,6 +139,7 @@ impl CpuState {
 pub struct EmulatorState {
     pub cpu: CpuState,
     pub mmu: MMU,
+    pub ppu: PpuState,
 
     // Legacy memory array for backward compatibility (TODO: remove after updating CPU)
     pub memory: [u8; 0x10000],
@@ -148,6 +150,7 @@ impl EmulatorState {
         Self {
             cpu: CpuState::new(),
             mmu: MMU::new(),
+            ppu: PpuState::new(),
             memory: [0; 0x10000],
         }
     }
