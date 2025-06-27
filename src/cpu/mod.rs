@@ -1980,6 +1980,113 @@ async fn execute_cb_set_hl(bit_pos: u8) {
     // SET doesn't affect any flags
 }
 
+async fn execute_jp_nn() {
+    // JP nn - 4 M-cycles total
+    // M2: Read LSB of address
+    let nn_lsb = fetch().await;
+    // M3: Read MSB of address
+    let nn_msb = fetch().await;
+    // M4: Internal operation
+    sleep(4).await;
+
+    // Construct 16-bit address
+    let nn = ((nn_msb as u16) << 8) | (nn_lsb as u16);
+
+    with_state_mut(|state| {
+        state.cpu.pc = nn;
+    });
+}
+
+async fn execute_jp_hl() {
+    // JP HL - 1 M-cycle total
+    // Just set PC to HL value
+    let hl = with_state(|state| state.cpu.hl());
+    with_state_mut(|state| {
+        state.cpu.pc = hl;
+    });
+}
+
+async fn execute_jp_cc_nn(opcode: u8) {
+    // JP cc, nn - 3 or 4 M-cycles total
+    // M2: Read LSB of address
+    let nn_lsb = fetch().await;
+    // M3: Read MSB of address
+    let nn_msb = fetch().await;
+
+    // Construct 16-bit address
+    let nn = ((nn_msb as u16) << 8) | (nn_lsb as u16);
+
+    // Decode condition from opcode bits 4-3
+    let condition_met = with_state(|state| {
+        let cc_bits = (opcode >> 3) & 0b11;
+        match cc_bits {
+            0b00 => !state.cpu.flag_z(), // JP NZ, nn (0xC2)
+            0b01 => state.cpu.flag_z(),  // JP Z, nn (0xCA)
+            0b10 => !state.cpu.flag_c(), // JP NC, nn (0xD2)
+            0b11 => state.cpu.flag_c(),  // JP C, nn (0xDA)
+            _ => unreachable!(),
+        }
+    });
+
+    if condition_met {
+        // M4: Internal operation (extra cycle when jump taken)
+        sleep(4).await;
+        with_state_mut(|state| {
+            state.cpu.pc = nn;
+        });
+    }
+    // If condition not met, no extra cycle and PC stays as is
+}
+
+async fn execute_jr_e() {
+    // JR e - 3 M-cycles total
+    // M2: Read signed 8-bit offset
+    let e = fetch().await;
+    
+    // M3: Internal operation
+    sleep(4).await;
+
+    let e_signed = e as i8 as i16; // Sign extend to 16-bit
+    let current_pc = with_state(|state| state.cpu.pc);
+    let new_pc = current_pc.wrapping_add(e_signed as u16);
+
+    with_state_mut(|state| {
+        state.cpu.pc = new_pc;
+    });
+}
+
+async fn execute_jr_cc_e(opcode: u8) {
+    // JR cc, e - 2 or 3 M-cycles total
+    // M2: Read signed 8-bit offset
+    let e = fetch().await;
+
+    // Decode condition from opcode bits 4-3
+    let condition_met = with_state(|state| {
+        let cc_bits = (opcode >> 3) & 0b11;
+        match cc_bits {
+            0b00 => !state.cpu.flag_z(), // JR NZ, e (0x20)
+            0b01 => state.cpu.flag_z(),  // JR Z, e (0x28)
+            0b10 => !state.cpu.flag_c(), // JR NC, e (0x30)
+            0b11 => state.cpu.flag_c(),  // JR C, e (0x38)
+            _ => unreachable!(),
+        }
+    });
+
+    if condition_met {
+        // M3: Internal operation (extra cycle when jump taken)
+        sleep(4).await;
+        
+        let e_signed = e as i8 as i16; // Sign extend to 16-bit
+        let current_pc = with_state(|state| state.cpu.pc);
+        let new_pc = current_pc.wrapping_add(e_signed as u16);
+
+        with_state_mut(|state| {
+            state.cpu.pc = new_pc;
+        });
+    }
+    // If condition not met, no extra cycle and PC stays as is
+}
+
 async fn execute_cb_instruction() {
     // CB prefix - fetch the actual CB instruction
     let cb_opcode = fetch().await;
@@ -2091,6 +2198,12 @@ async fn decode_and_execute(opcode: u8) {
         0x1F => execute_rra().await,  // RRA
         // CB-prefixed instructions
         0xCB => execute_cb_instruction().await, // CB prefix
+        // Control flow instructions
+        0xC3 => execute_jp_nn().await,                      // JP nn
+        0xE9 => execute_jp_hl().await,                      // JP HL
+        0xC2 | 0xCA | 0xD2 | 0xDA => execute_jp_cc_nn(opcode).await, // JP cc, nn
+        0x18 => execute_jr_e().await,                       // JR e
+        0x20 | 0x28 | 0x30 | 0x38 => execute_jr_cc_e(opcode).await,  // JR cc, e
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
