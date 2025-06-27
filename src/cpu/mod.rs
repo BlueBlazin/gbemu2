@@ -1239,6 +1239,781 @@ async fn execute_add_sp_e() {
     });
 }
 
+async fn execute_rlca() {
+    // RLCA - 1 M-cycle total
+    // Rotate left circular accumulator
+    with_state_mut(|state| {
+        let a = state.cpu.a;
+        let bit7 = (a & 0x80) != 0;
+        let result = (a << 1) | if bit7 { 1 } else { 0 };
+        
+        state.cpu.a = result;
+        // RLCA sets Z=0, N=0, H=0, C=old_bit7
+        state.cpu.set_flags(false, false, false, bit7);
+    });
+}
+
+async fn execute_rrca() {
+    // RRCA - 1 M-cycle total
+    // Rotate right circular accumulator
+    with_state_mut(|state| {
+        let a = state.cpu.a;
+        let bit0 = (a & 0x01) != 0;
+        let result = (a >> 1) | if bit0 { 0x80 } else { 0 };
+        
+        state.cpu.a = result;
+        // RRCA sets Z=0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(false, false, false, bit0);
+    });
+}
+
+async fn execute_rla() {
+    // RLA - 1 M-cycle total
+    // Rotate left accumulator through carry
+    with_state_mut(|state| {
+        let a = state.cpu.a;
+        let old_carry = state.cpu.flag_c();
+        let bit7 = (a & 0x80) != 0;
+        let result = (a << 1) | if old_carry { 1 } else { 0 };
+        
+        state.cpu.a = result;
+        // RLA sets Z=0, N=0, H=0, C=old_bit7
+        state.cpu.set_flags(false, false, false, bit7);
+    });
+}
+
+async fn execute_rra() {
+    // RRA - 1 M-cycle total
+    // Rotate right accumulator through carry
+    with_state_mut(|state| {
+        let a = state.cpu.a;
+        let old_carry = state.cpu.flag_c();
+        let bit0 = (a & 0x01) != 0;
+        let result = (a >> 1) | if old_carry { 0x80 } else { 0 };
+        
+        state.cpu.a = result;
+        // RRA sets Z=0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(false, false, false, bit0);
+    });
+}
+
+// Helper functions for CB-prefixed rotate/shift operations
+fn rlc_8bit(value: u8) -> (u8, bool, bool) {
+    let bit7 = (value & 0x80) != 0;
+    let result = (value << 1) | if bit7 { 1 } else { 0 };
+    let zero = result == 0;
+    (result, zero, bit7)
+}
+
+fn rrc_8bit(value: u8) -> (u8, bool, bool) {
+    let bit0 = (value & 0x01) != 0;
+    let result = (value >> 1) | if bit0 { 0x80 } else { 0 };
+    let zero = result == 0;
+    (result, zero, bit0)
+}
+
+fn rl_8bit(value: u8, carry_in: bool) -> (u8, bool, bool) {
+    let bit7 = (value & 0x80) != 0;
+    let result = (value << 1) | if carry_in { 1 } else { 0 };
+    let zero = result == 0;
+    (result, zero, bit7)
+}
+
+fn rr_8bit(value: u8, carry_in: bool) -> (u8, bool, bool) {
+    let bit0 = (value & 0x01) != 0;
+    let result = (value >> 1) | if carry_in { 0x80 } else { 0 };
+    let zero = result == 0;
+    (result, zero, bit0)
+}
+
+fn sla_8bit(value: u8) -> (u8, bool, bool) {
+    let bit7 = (value & 0x80) != 0;
+    let result = value << 1;
+    let zero = result == 0;
+    (result, zero, bit7)
+}
+
+fn sra_8bit(value: u8) -> (u8, bool, bool) {
+    let bit0 = (value & 0x01) != 0;
+    let bit7 = value & 0x80; // Preserve sign bit
+    let result = (value >> 1) | bit7;
+    let zero = result == 0;
+    (result, zero, bit0)
+}
+
+fn swap_8bit(value: u8) -> (u8, bool) {
+    let result = ((value & 0x0F) << 4) | ((value & 0xF0) >> 4);
+    let zero = result == 0;
+    (result, zero)
+}
+
+fn srl_8bit(value: u8) -> (u8, bool, bool) {
+    let bit0 = (value & 0x01) != 0;
+    let result = value >> 1; // Logical shift (no sign preservation)
+    let zero = result == 0;
+    (result, zero, bit0)
+}
+
+async fn execute_cb_rlc_r(opcode: u8) {
+    // RLC r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // RLC (HL) - 4 M-cycles total
+        execute_cb_rlc_hl().await;
+        return;
+    }
+
+    let old_val = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        }
+    });
+
+    let (result, zero, carry) = rlc_8bit(old_val);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // RLC sets Z=result==0, N=0, H=0, C=old_bit7
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_rlc_hl() {
+    // RLC (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let (result, zero, carry) = rlc_8bit(old_val);
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // RLC sets Z=result==0, N=0, H=0, C=old_bit7
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_rrc_r(opcode: u8) {
+    // RRC r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // RRC (HL) - 4 M-cycles total
+        execute_cb_rrc_hl().await;
+        return;
+    }
+
+    let old_val = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        }
+    });
+
+    let (result, zero, carry) = rrc_8bit(old_val);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // RRC sets Z=result==0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_rrc_hl() {
+    // RRC (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let (result, zero, carry) = rrc_8bit(old_val);
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // RRC sets Z=result==0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_rl_r(opcode: u8) {
+    // RL r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // RL (HL) - 4 M-cycles total
+        execute_cb_rl_hl().await;
+        return;
+    }
+
+    let (old_val, carry_in) = with_state(|state| {
+        let val = match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        };
+        (val, state.cpu.flag_c())
+    });
+
+    let (result, zero, carry) = rl_8bit(old_val, carry_in);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // RL sets Z=result==0, N=0, H=0, C=old_bit7
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_rl_hl() {
+    // RL (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let carry_in = with_state(|state| state.cpu.flag_c());
+    let (result, zero, carry) = rl_8bit(old_val, carry_in);
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // RL sets Z=result==0, N=0, H=0, C=old_bit7
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_rr_r(opcode: u8) {
+    // RR r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // RR (HL) - 4 M-cycles total
+        execute_cb_rr_hl().await;
+        return;
+    }
+
+    let (old_val, carry_in) = with_state(|state| {
+        let val = match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        };
+        (val, state.cpu.flag_c())
+    });
+
+    let (result, zero, carry) = rr_8bit(old_val, carry_in);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // RR sets Z=result==0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_rr_hl() {
+    // RR (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let carry_in = with_state(|state| state.cpu.flag_c());
+    let (result, zero, carry) = rr_8bit(old_val, carry_in);
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // RR sets Z=result==0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_sla_r(opcode: u8) {
+    // SLA r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // SLA (HL) - 4 M-cycles total
+        execute_cb_sla_hl().await;
+        return;
+    }
+
+    let old_val = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        }
+    });
+
+    let (result, zero, carry) = sla_8bit(old_val);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // SLA sets Z=result==0, N=0, H=0, C=old_bit7
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_sla_hl() {
+    // SLA (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let (result, zero, carry) = sla_8bit(old_val);
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // SLA sets Z=result==0, N=0, H=0, C=old_bit7
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_sra_r(opcode: u8) {
+    // SRA r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // SRA (HL) - 4 M-cycles total
+        execute_cb_sra_hl().await;
+        return;
+    }
+
+    let old_val = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        }
+    });
+
+    let (result, zero, carry) = sra_8bit(old_val);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // SRA sets Z=result==0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_sra_hl() {
+    // SRA (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let (result, zero, carry) = sra_8bit(old_val);
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // SRA sets Z=result==0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_swap_r(opcode: u8) {
+    // SWAP r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // SWAP (HL) - 4 M-cycles total
+        execute_cb_swap_hl().await;
+        return;
+    }
+
+    let old_val = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        }
+    });
+
+    let (result, zero) = swap_8bit(old_val);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // SWAP sets Z=result==0, N=0, H=0, C=0
+        state.cpu.set_flags(zero, false, false, false);
+    });
+}
+
+async fn execute_cb_swap_hl() {
+    // SWAP (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let (result, zero) = swap_8bit(old_val);
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // SWAP sets Z=result==0, N=0, H=0, C=0
+        state.cpu.set_flags(zero, false, false, false);
+    });
+}
+
+async fn execute_cb_srl_r(opcode: u8) {
+    // SRL r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // SRL (HL) - 4 M-cycles total
+        execute_cb_srl_hl().await;
+        return;
+    }
+
+    let old_val = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        }
+    });
+
+    let (result, zero, carry) = srl_8bit(old_val);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // SRL sets Z=result==0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_srl_hl() {
+    // SRL (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let (result, zero, carry) = srl_8bit(old_val);
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // SRL sets Z=result==0, N=0, H=0, C=old_bit0
+        state.cpu.set_flags(zero, false, false, carry);
+    });
+}
+
+async fn execute_cb_bit_r(opcode: u8) {
+    // BIT b, r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+    let bit_pos = (opcode >> 3) & 0b111;
+
+    if reg_bits == 0b110 {
+        // BIT b, (HL) - 3 M-cycles total
+        execute_cb_bit_hl(bit_pos).await;
+        return;
+    }
+
+    let (reg_val, current_c) = with_state(|state| {
+        let val = match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        };
+        (val, state.cpu.flag_c())
+    });
+
+    let bit_set = (reg_val & (1 << bit_pos)) != 0;
+
+    with_state_mut(|state| {
+        // BIT sets Z=!bit_set, N=0, H=1, preserves C
+        state.cpu.set_flags(!bit_set, false, true, current_c);
+    });
+}
+
+async fn execute_cb_bit_hl(bit_pos: u8) {
+    // BIT b, (HL) - 3 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let reg_val = memory_read(hl_addr).await;
+
+    let current_c = with_state(|state| state.cpu.flag_c());
+    let bit_set = (reg_val & (1 << bit_pos)) != 0;
+
+    with_state_mut(|state| {
+        // BIT sets Z=!bit_set, N=0, H=1, preserves C
+        state.cpu.set_flags(!bit_set, false, true, current_c);
+    });
+}
+
+async fn execute_cb_res_r(opcode: u8) {
+    // RES b, r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+    let bit_pos = (opcode >> 3) & 0b111;
+
+    if reg_bits == 0b110 {
+        // RES b, (HL) - 4 M-cycles total
+        execute_cb_res_hl(bit_pos).await;
+        return;
+    }
+
+    let old_val = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        }
+    });
+
+    let result = old_val & !(1 << bit_pos); // Clear the bit
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // RES doesn't affect any flags
+    });
+}
+
+async fn execute_cb_res_hl(bit_pos: u8) {
+    // RES b, (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let result = old_val & !(1 << bit_pos); // Clear the bit
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    // RES doesn't affect any flags
+}
+
+async fn execute_cb_set_r(opcode: u8) {
+    // SET b, r - 2 M-cycles total
+    let reg_bits = opcode & 0b111;
+    let bit_pos = (opcode >> 3) & 0b111;
+
+    if reg_bits == 0b110 {
+        // SET b, (HL) - 4 M-cycles total
+        execute_cb_set_hl(bit_pos).await;
+        return;
+    }
+
+    let old_val = with_state(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(),
+        }
+    });
+
+    let result = old_val | (1 << bit_pos); // Set the bit
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // SET doesn't affect any flags
+    });
+}
+
+async fn execute_cb_set_hl(bit_pos: u8) {
+    // SET b, (HL) - 4 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let result = old_val | (1 << bit_pos); // Set the bit
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    // SET doesn't affect any flags
+}
+
+async fn execute_cb_instruction() {
+    // CB prefix - fetch the actual CB instruction
+    let cb_opcode = fetch().await;
+
+    match cb_opcode {
+        // RLC r (0x00-0x07)
+        0x00..=0x07 => execute_cb_rlc_r(cb_opcode).await,
+        // RRC r (0x08-0x0F)
+        0x08..=0x0F => execute_cb_rrc_r(cb_opcode).await,
+        // RL r (0x10-0x17)
+        0x10..=0x17 => execute_cb_rl_r(cb_opcode).await,
+        // RR r (0x18-0x1F)
+        0x18..=0x1F => execute_cb_rr_r(cb_opcode).await,
+        // SLA r (0x20-0x27)
+        0x20..=0x27 => execute_cb_sla_r(cb_opcode).await,
+        // SRA r (0x28-0x2F)
+        0x28..=0x2F => execute_cb_sra_r(cb_opcode).await,
+        // SWAP r (0x30-0x37)
+        0x30..=0x37 => execute_cb_swap_r(cb_opcode).await,
+        // SRL r (0x38-0x3F)
+        0x38..=0x3F => execute_cb_srl_r(cb_opcode).await,
+        // BIT b, r (0x40-0x7F)
+        0x40..=0x7F => execute_cb_bit_r(cb_opcode).await,
+        // RES b, r (0x80-0xBF)
+        0x80..=0xBF => execute_cb_res_r(cb_opcode).await,
+        // SET b, r (0xC0-0xFF)
+        0xC0..=0xFF => execute_cb_set_r(cb_opcode).await,
+        _ => {
+            println!("Unimplemented CB instruction: 0x{:02X}", cb_opcode);
+            sleep(4).await;
+        }
+    }
+}
+
 async fn decode_and_execute(opcode: u8) {
     match opcode {
         // LD r, n instructions (0b00xxx110)
@@ -1309,6 +2084,13 @@ async fn decode_and_execute(opcode: u8) {
         0x0B | 0x1B | 0x2B | 0x3B => execute_dec_rr(opcode).await, // DEC rr
         0x09 | 0x19 | 0x29 | 0x39 => execute_add_hl_rr(opcode).await, // ADD HL,rr
         0xE8 => execute_add_sp_e().await, // ADD SP,e
+        // Rotate/shift instructions (accumulator)
+        0x07 => execute_rlca().await, // RLCA
+        0x0F => execute_rrca().await, // RRCA
+        0x17 => execute_rla().await,  // RLA
+        0x1F => execute_rra().await,  // RRA
+        // CB-prefixed instructions
+        0xCB => execute_cb_instruction().await, // CB prefix
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
