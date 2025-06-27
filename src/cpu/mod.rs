@@ -1246,7 +1246,7 @@ async fn execute_rlca() {
         let a = state.cpu.a;
         let bit7 = (a & 0x80) != 0;
         let result = (a << 1) | if bit7 { 1 } else { 0 };
-        
+
         state.cpu.a = result;
         // RLCA sets Z=0, N=0, H=0, C=old_bit7
         state.cpu.set_flags(false, false, false, bit7);
@@ -1260,7 +1260,7 @@ async fn execute_rrca() {
         let a = state.cpu.a;
         let bit0 = (a & 0x01) != 0;
         let result = (a >> 1) | if bit0 { 0x80 } else { 0 };
-        
+
         state.cpu.a = result;
         // RRCA sets Z=0, N=0, H=0, C=old_bit0
         state.cpu.set_flags(false, false, false, bit0);
@@ -1275,7 +1275,7 @@ async fn execute_rla() {
         let old_carry = state.cpu.flag_c();
         let bit7 = (a & 0x80) != 0;
         let result = (a << 1) | if old_carry { 1 } else { 0 };
-        
+
         state.cpu.a = result;
         // RLA sets Z=0, N=0, H=0, C=old_bit7
         state.cpu.set_flags(false, false, false, bit7);
@@ -1290,7 +1290,7 @@ async fn execute_rra() {
         let old_carry = state.cpu.flag_c();
         let bit0 = (a & 0x01) != 0;
         let result = (a >> 1) | if old_carry { 0x80 } else { 0 };
-        
+
         state.cpu.a = result;
         // RRA sets Z=0, N=0, H=0, C=old_bit0
         state.cpu.set_flags(false, false, false, bit0);
@@ -1364,17 +1364,15 @@ async fn execute_cb_rlc_r(opcode: u8) {
         return;
     }
 
-    let old_val = with_state(|state| {
-        match reg_bits {
-            0b000 => state.cpu.b,
-            0b001 => state.cpu.c,
-            0b010 => state.cpu.d,
-            0b011 => state.cpu.e,
-            0b100 => state.cpu.h,
-            0b101 => state.cpu.l,
-            0b111 => state.cpu.a,
-            _ => unreachable!(),
-        }
+    let old_val = with_state(|state| match reg_bits {
+        0b000 => state.cpu.b,
+        0b001 => state.cpu.c,
+        0b010 => state.cpu.d,
+        0b011 => state.cpu.e,
+        0b100 => state.cpu.h,
+        0b101 => state.cpu.l,
+        0b111 => state.cpu.a,
+        _ => unreachable!(),
     });
 
     let (result, zero, carry) = rlc_8bit(old_val);
@@ -1422,17 +1420,15 @@ async fn execute_cb_rrc_r(opcode: u8) {
         return;
     }
 
-    let old_val = with_state(|state| {
-        match reg_bits {
-            0b000 => state.cpu.b,
-            0b001 => state.cpu.c,
-            0b010 => state.cpu.d,
-            0b011 => state.cpu.e,
-            0b100 => state.cpu.h,
-            0b101 => state.cpu.l,
-            0b111 => state.cpu.a,
-            _ => unreachable!(),
-        }
+    let old_val = with_state(|state| match reg_bits {
+        0b000 => state.cpu.b,
+        0b001 => state.cpu.c,
+        0b010 => state.cpu.d,
+        0b011 => state.cpu.e,
+        0b100 => state.cpu.h,
+        0b101 => state.cpu.l,
+        0b111 => state.cpu.a,
+        _ => unreachable!(),
     });
 
     let (result, zero, carry) = rrc_8bit(old_val);
@@ -1600,17 +1596,15 @@ async fn execute_cb_sla_r(opcode: u8) {
         return;
     }
 
-    let old_val = with_state(|state| {
-        match reg_bits {
-            0b000 => state.cpu.b,
-            0b001 => state.cpu.c,
-            0b010 => state.cpu.d,
-            0b011 => state.cpu.e,
-            0b100 => state.cpu.h,
-            0b101 => state.cpu.l,
-            0b111 => state.cpu.a,
-            _ => unreachable!(),
-        }
+    let old_val = with_state(|state| match reg_bits {
+        0b000 => state.cpu.b,
+        0b001 => state.cpu.c,
+        0b010 => state.cpu.d,
+        0b011 => state.cpu.e,
+        0b100 => state.cpu.h,
+        0b101 => state.cpu.l,
+        0b111 => state.cpu.a,
+        _ => unreachable!(),
     });
 
     let (result, zero, carry) = sla_8bit(old_val);
@@ -1658,17 +1652,15 @@ async fn execute_cb_sra_r(opcode: u8) {
         return;
     }
 
-    let old_val = with_state(|state| {
-        match reg_bits {
-            0b000 => state.cpu.b,
-            0b001 => state.cpu.c,
-            0b010 => state.cpu.d,
-            0b011 => state.cpu.e,
-            0b100 => state.cpu.h,
-            0b101 => state.cpu.l,
-            0b111 => state.cpu.a,
-            _ => unreachable!(),
-        }
+    let old_val = with_state(|state| match reg_bits {
+        0b000 => state.cpu.b,
+        0b001 => state.cpu.c,
+        0b010 => state.cpu.d,
+        0b011 => state.cpu.e,
+        0b100 => state.cpu.h,
+        0b101 => state.cpu.l,
+        0b111 => state.cpu.a,
+        _ => unreachable!(),
     });
 
     let (result, zero, carry) = sra_8bit(old_val);
@@ -1716,17 +1708,15 @@ async fn execute_cb_swap_r(opcode: u8) {
         return;
     }
 
-    let old_val = with_state(|state| {
-        match reg_bits {
-            0b000 => state.cpu.b,
-            0b001 => state.cpu.c,
-            0b010 => state.cpu.d,
-            0b011 => state.cpu.e,
-            0b100 => state.cpu.h,
-            0b101 => state.cpu.l,
-            0b111 => state.cpu.a,
-            _ => unreachable!(),
-        }
+    let old_val = with_state(|state| match reg_bits {
+        0b000 => state.cpu.b,
+        0b001 => state.cpu.c,
+        0b010 => state.cpu.d,
+        0b011 => state.cpu.e,
+        0b100 => state.cpu.h,
+        0b101 => state.cpu.l,
+        0b111 => state.cpu.a,
+        _ => unreachable!(),
     });
 
     let (result, zero) = swap_8bit(old_val);
@@ -1774,17 +1764,15 @@ async fn execute_cb_srl_r(opcode: u8) {
         return;
     }
 
-    let old_val = with_state(|state| {
-        match reg_bits {
-            0b000 => state.cpu.b,
-            0b001 => state.cpu.c,
-            0b010 => state.cpu.d,
-            0b011 => state.cpu.e,
-            0b100 => state.cpu.h,
-            0b101 => state.cpu.l,
-            0b111 => state.cpu.a,
-            _ => unreachable!(),
-        }
+    let old_val = with_state(|state| match reg_bits {
+        0b000 => state.cpu.b,
+        0b001 => state.cpu.c,
+        0b010 => state.cpu.d,
+        0b011 => state.cpu.e,
+        0b100 => state.cpu.h,
+        0b101 => state.cpu.l,
+        0b111 => state.cpu.a,
+        _ => unreachable!(),
     });
 
     let (result, zero, carry) = srl_8bit(old_val);
@@ -1881,17 +1869,15 @@ async fn execute_cb_res_r(opcode: u8) {
         return;
     }
 
-    let old_val = with_state(|state| {
-        match reg_bits {
-            0b000 => state.cpu.b,
-            0b001 => state.cpu.c,
-            0b010 => state.cpu.d,
-            0b011 => state.cpu.e,
-            0b100 => state.cpu.h,
-            0b101 => state.cpu.l,
-            0b111 => state.cpu.a,
-            _ => unreachable!(),
-        }
+    let old_val = with_state(|state| match reg_bits {
+        0b000 => state.cpu.b,
+        0b001 => state.cpu.c,
+        0b010 => state.cpu.d,
+        0b011 => state.cpu.e,
+        0b100 => state.cpu.h,
+        0b101 => state.cpu.l,
+        0b111 => state.cpu.a,
+        _ => unreachable!(),
     });
 
     let result = old_val & !(1 << bit_pos); // Clear the bit
@@ -1936,17 +1922,15 @@ async fn execute_cb_set_r(opcode: u8) {
         return;
     }
 
-    let old_val = with_state(|state| {
-        match reg_bits {
-            0b000 => state.cpu.b,
-            0b001 => state.cpu.c,
-            0b010 => state.cpu.d,
-            0b011 => state.cpu.e,
-            0b100 => state.cpu.h,
-            0b101 => state.cpu.l,
-            0b111 => state.cpu.a,
-            _ => unreachable!(),
-        }
+    let old_val = with_state(|state| match reg_bits {
+        0b000 => state.cpu.b,
+        0b001 => state.cpu.c,
+        0b010 => state.cpu.d,
+        0b011 => state.cpu.e,
+        0b100 => state.cpu.h,
+        0b101 => state.cpu.l,
+        0b111 => state.cpu.a,
+        _ => unreachable!(),
     });
 
     let result = old_val | (1 << bit_pos); // Set the bit
@@ -2042,7 +2026,7 @@ async fn execute_jr_e() {
     // JR e - 3 M-cycles total
     // M2: Read signed 8-bit offset
     let e = fetch().await;
-    
+
     // M3: Internal operation
     sleep(4).await;
 
@@ -2075,7 +2059,7 @@ async fn execute_jr_cc_e(opcode: u8) {
     if condition_met {
         // M3: Internal operation (extra cycle when jump taken)
         sleep(4).await;
-        
+
         let e_signed = e as i8 as i16; // Sign extend to 16-bit
         let current_pc = with_state(|state| state.cpu.pc);
         let new_pc = current_pc.wrapping_add(e_signed as u16);
@@ -2374,7 +2358,7 @@ async fn decode_and_execute(opcode: u8) {
         0x03 | 0x13 | 0x23 | 0x33 => execute_inc_rr(opcode).await, // INC rr
         0x0B | 0x1B | 0x2B | 0x3B => execute_dec_rr(opcode).await, // DEC rr
         0x09 | 0x19 | 0x29 | 0x39 => execute_add_hl_rr(opcode).await, // ADD HL,rr
-        0xE8 => execute_add_sp_e().await, // ADD SP,e
+        0xE8 => execute_add_sp_e().await,                          // ADD SP,e
         // Rotate/shift instructions (accumulator)
         0x07 => execute_rlca().await, // RLCA
         0x0F => execute_rrca().await, // RRCA
@@ -2383,16 +2367,16 @@ async fn decode_and_execute(opcode: u8) {
         // CB-prefixed instructions
         0xCB => execute_cb_instruction().await, // CB prefix
         // Control flow instructions
-        0xC3 => execute_jp_nn().await,                      // JP nn
-        0xE9 => execute_jp_hl().await,                      // JP HL
+        0xC3 => execute_jp_nn().await, // JP nn
+        0xE9 => execute_jp_hl().await, // JP HL
         0xC2 | 0xCA | 0xD2 | 0xDA => execute_jp_cc_nn(opcode).await, // JP cc, nn
-        0x18 => execute_jr_e().await,                       // JR e
-        0x20 | 0x28 | 0x30 | 0x38 => execute_jr_cc_e(opcode).await,  // JR cc, e
-        0xCD => execute_call_nn().await,                    // CALL nn
+        0x18 => execute_jr_e().await,  // JR e
+        0x20 | 0x28 | 0x30 | 0x38 => execute_jr_cc_e(opcode).await, // JR cc, e
+        0xCD => execute_call_nn().await, // CALL nn
         0xC4 | 0xCC | 0xD4 | 0xDC => execute_call_cc_nn(opcode).await, // CALL cc, nn
-        0xC9 => execute_ret().await,                        // RET
-        0xC0 | 0xC8 | 0xD0 | 0xD8 => execute_ret_cc(opcode).await,     // RET cc
-        0xD9 => execute_reti().await,                       // RETI
+        0xC9 => execute_ret().await,   // RET
+        0xC0 | 0xC8 | 0xD0 | 0xD8 => execute_ret_cc(opcode).await, // RET cc
+        0xD9 => execute_reti().await,  // RETI
         0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => execute_rst_n(opcode).await, // RST n
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
