@@ -2087,6 +2087,190 @@ async fn execute_jr_cc_e(opcode: u8) {
     // If condition not met, no extra cycle and PC stays as is
 }
 
+async fn execute_call_nn() {
+    // CALL nn - 6 M-cycles total
+    // M2: Read LSB of address
+    let nn_lsb = fetch().await;
+    // M3: Read MSB of address
+    let nn_msb = fetch().await;
+
+    // Construct 16-bit address
+    let nn = ((nn_msb as u16) << 8) | (nn_lsb as u16);
+
+    // M4: Internal operation
+    sleep(4).await;
+
+    // M5: Push high byte of PC to stack
+    let (pc, mut sp) = with_state(|state| (state.cpu.pc, state.cpu.sp));
+    sp = sp.wrapping_sub(1);
+    memory_write(sp, (pc >> 8) as u8).await;
+
+    // M6: Push low byte of PC to stack
+    sp = sp.wrapping_sub(1);
+    memory_write(sp, (pc & 0xFF) as u8).await;
+
+    with_state_mut(|state| {
+        state.cpu.sp = sp;
+        state.cpu.pc = nn;
+    });
+}
+
+async fn execute_call_cc_nn(opcode: u8) {
+    // CALL cc, nn - 3 or 6 M-cycles total
+    // M2: Read LSB of address
+    let nn_lsb = fetch().await;
+    // M3: Read MSB of address
+    let nn_msb = fetch().await;
+
+    // Construct 16-bit address
+    let nn = ((nn_msb as u16) << 8) | (nn_lsb as u16);
+
+    // Decode condition from opcode bits 4-3
+    let condition_met = with_state(|state| {
+        let cc_bits = (opcode >> 3) & 0b11;
+        match cc_bits {
+            0b00 => !state.cpu.flag_z(), // CALL NZ, nn (0xC4)
+            0b01 => state.cpu.flag_z(),  // CALL Z, nn (0xCC)
+            0b10 => !state.cpu.flag_c(), // CALL NC, nn (0xD4)
+            0b11 => state.cpu.flag_c(),  // CALL C, nn (0xDC)
+            _ => unreachable!(),
+        }
+    });
+
+    if condition_met {
+        // M4: Internal operation
+        sleep(4).await;
+
+        // M5: Push high byte of PC to stack
+        let (pc, mut sp) = with_state(|state| (state.cpu.pc, state.cpu.sp));
+        sp = sp.wrapping_sub(1);
+        memory_write(sp, (pc >> 8) as u8).await;
+
+        // M6: Push low byte of PC to stack
+        sp = sp.wrapping_sub(1);
+        memory_write(sp, (pc & 0xFF) as u8).await;
+
+        with_state_mut(|state| {
+            state.cpu.sp = sp;
+            state.cpu.pc = nn;
+        });
+    }
+    // If condition not met, no extra cycles and PC stays as is
+}
+
+async fn execute_ret() {
+    // RET - 4 M-cycles total
+    // M2: Read low byte from stack
+    let mut sp = with_state(|state| state.cpu.sp);
+    let pc_lsb = memory_read(sp).await;
+    sp = sp.wrapping_add(1);
+
+    // M3: Read high byte from stack
+    let pc_msb = memory_read(sp).await;
+    sp = sp.wrapping_add(1);
+
+    // M4: Internal operation
+    sleep(4).await;
+
+    // Construct 16-bit PC
+    let pc = ((pc_msb as u16) << 8) | (pc_lsb as u16);
+
+    with_state_mut(|state| {
+        state.cpu.sp = sp;
+        state.cpu.pc = pc;
+    });
+}
+
+async fn execute_ret_cc(opcode: u8) {
+    // RET cc - 2 or 5 M-cycles total
+    // M2: Internal operation
+    sleep(4).await;
+
+    // Decode condition from opcode bits 4-3
+    let condition_met = with_state(|state| {
+        let cc_bits = (opcode >> 3) & 0b11;
+        match cc_bits {
+            0b00 => !state.cpu.flag_z(), // RET NZ (0xC0)
+            0b01 => state.cpu.flag_z(),  // RET Z (0xC8)
+            0b10 => !state.cpu.flag_c(), // RET NC (0xD0)
+            0b11 => state.cpu.flag_c(),  // RET C (0xD8)
+            _ => unreachable!(),
+        }
+    });
+
+    if condition_met {
+        // M3: Read low byte from stack
+        let mut sp = with_state(|state| state.cpu.sp);
+        let pc_lsb = memory_read(sp).await;
+        sp = sp.wrapping_add(1);
+
+        // M4: Read high byte from stack
+        let pc_msb = memory_read(sp).await;
+        sp = sp.wrapping_add(1);
+
+        // M5: Internal operation
+        sleep(4).await;
+
+        // Construct 16-bit PC
+        let pc = ((pc_msb as u16) << 8) | (pc_lsb as u16);
+
+        with_state_mut(|state| {
+            state.cpu.sp = sp;
+            state.cpu.pc = pc;
+        });
+    }
+    // If condition not met, no extra cycles and PC stays as is
+}
+
+async fn execute_reti() {
+    // RETI - 4 M-cycles total
+    // M2: Read low byte from stack
+    let mut sp = with_state(|state| state.cpu.sp);
+    let pc_lsb = memory_read(sp).await;
+    sp = sp.wrapping_add(1);
+
+    // M3: Read high byte from stack
+    let pc_msb = memory_read(sp).await;
+    sp = sp.wrapping_add(1);
+
+    // M4: Internal operation
+    sleep(4).await;
+
+    // Construct 16-bit PC
+    let pc = ((pc_msb as u16) << 8) | (pc_lsb as u16);
+
+    with_state_mut(|state| {
+        state.cpu.sp = sp;
+        state.cpu.pc = pc;
+        // TODO: Set IME (Interrupt Master Enable) flag to 1
+        // This will be implemented when we add interrupt support
+    });
+}
+
+async fn execute_rst_n(opcode: u8) {
+    // RST n - 4 M-cycles total
+    // M2: Internal operation
+    sleep(4).await;
+
+    // M3: Push high byte of PC to stack
+    let (pc, mut sp) = with_state(|state| (state.cpu.pc, state.cpu.sp));
+    sp = sp.wrapping_sub(1);
+    memory_write(sp, (pc >> 8) as u8).await;
+
+    // M4: Push low byte of PC to stack
+    sp = sp.wrapping_sub(1);
+    memory_write(sp, (pc & 0xFF) as u8).await;
+
+    // Decode restart address from opcode bits 5-3
+    let rst_addr = (opcode >> 3) & 0b111;
+    let target_addr = (rst_addr as u16) * 8; // RST addresses are 0x00, 0x08, 0x10, ..., 0x38
+
+    with_state_mut(|state| {
+        state.cpu.sp = sp;
+        state.cpu.pc = target_addr;
+    });
+}
+
 async fn execute_cb_instruction() {
     // CB prefix - fetch the actual CB instruction
     let cb_opcode = fetch().await;
@@ -2204,6 +2388,12 @@ async fn decode_and_execute(opcode: u8) {
         0xC2 | 0xCA | 0xD2 | 0xDA => execute_jp_cc_nn(opcode).await, // JP cc, nn
         0x18 => execute_jr_e().await,                       // JR e
         0x20 | 0x28 | 0x30 | 0x38 => execute_jr_cc_e(opcode).await,  // JR cc, e
+        0xCD => execute_call_nn().await,                    // CALL nn
+        0xC4 | 0xCC | 0xD4 | 0xDC => execute_call_cc_nn(opcode).await, // CALL cc, nn
+        0xC9 => execute_ret().await,                        // RET
+        0xC0 | 0xC8 | 0xD0 | 0xD8 => execute_ret_cc(opcode).await,     // RET cc
+        0xD9 => execute_reti().await,                       // RETI
+        0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => execute_rst_n(opcode).await, // RST n
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
