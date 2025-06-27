@@ -408,6 +408,22 @@ fn sub_8bit(a: u8, b: u8, carry: bool) -> (u8, bool, bool, bool) {
     (result, zero, half_carry, carry_flag)
 }
 
+// Helper function for 8-bit increment with flag calculation (no carry flag affected)
+fn inc_8bit(a: u8) -> (u8, bool, bool) {
+    let result = a.wrapping_add(1);
+    let zero = result == 0;
+    let half_carry = (a & 0xF) == 0xF; // Half-carry occurs when lower nibble is 0xF
+    (result, zero, half_carry)
+}
+
+// Helper function for 8-bit decrement with flag calculation (no carry flag affected)
+fn dec_8bit(a: u8) -> (u8, bool, bool) {
+    let result = a.wrapping_sub(1);
+    let zero = result == 0;
+    let half_carry = (a & 0xF) == 0; // Half-carry occurs when lower nibble is 0
+    (result, zero, half_carry)
+}
+
 async fn execute_add_r(opcode: u8) {
     // ADD r - 1 or 2 M-cycles total depending on operand
     let reg_bits = opcode & 0b111;
@@ -656,6 +672,246 @@ async fn execute_sbc_n() {
     });
 }
 
+async fn execute_cp_r(opcode: u8) {
+    // CP r - 1 or 2 M-cycles total depending on operand
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // CP (HL) - 2 M-cycles total
+        execute_cp_hl().await;
+        return;
+    }
+
+    let (a_val, operand) = with_state(|state| {
+        let a = state.cpu.a;
+        let op = match reg_bits {
+            0b000 => state.cpu.b, // CP B (0xB8)
+            0b001 => state.cpu.c, // CP C (0xB9)
+            0b010 => state.cpu.d, // CP D (0xBA)
+            0b011 => state.cpu.e, // CP E (0xBB)
+            0b100 => state.cpu.h, // CP H (0xBC)
+            0b101 => state.cpu.l, // CP L (0xBD)
+            0b111 => state.cpu.a, // CP A (0xBF)
+            _ => unreachable!(),
+        };
+        (a, op)
+    });
+
+    let (_, zero, half_carry, carry) = sub_8bit(a_val, operand, false);
+
+    with_state_mut(|state| {
+        // CP doesn't update A register, only flags
+        state.cpu.set_flags(zero, true, half_carry, carry); // N = 1 for subtraction
+    });
+}
+
+async fn execute_cp_hl() {
+    // CP (HL) - 2 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let operand = memory_read(hl_addr).await;
+
+    let a_val = with_state(|state| state.cpu.a);
+    let (_, zero, half_carry, carry) = sub_8bit(a_val, operand, false);
+
+    with_state_mut(|state| {
+        // CP doesn't update A register, only flags
+        state.cpu.set_flags(zero, true, half_carry, carry); // N = 1 for subtraction
+    });
+}
+
+async fn execute_cp_n() {
+    // CP n - 2 M-cycles total
+    // M2: Read immediate value
+    let operand = fetch().await;
+
+    let a_val = with_state(|state| state.cpu.a);
+    let (_, zero, half_carry, carry) = sub_8bit(a_val, operand, false);
+
+    with_state_mut(|state| {
+        // CP doesn't update A register, only flags
+        state.cpu.set_flags(zero, true, half_carry, carry); // N = 1 for subtraction
+    });
+}
+
+async fn execute_inc_r(opcode: u8) {
+    // INC r - 1 M-cycle total
+    // Decode which register based on opcode bits 5-3
+    let reg_bits = (opcode >> 3) & 0b111;
+
+    let (old_val, carry_flag) = with_state(|state| {
+        let val = match reg_bits {
+            0b000 => state.cpu.b, // INC B (0x04)
+            0b001 => state.cpu.c, // INC C (0x0C)
+            0b010 => state.cpu.d, // INC D (0x14)
+            0b011 => state.cpu.e, // INC E (0x1C)
+            0b100 => state.cpu.h, // INC H (0x24)
+            0b101 => state.cpu.l, // INC L (0x2C)
+            0b111 => state.cpu.a, // INC A (0x3C)
+            _ => panic!("Invalid INC r opcode: 0x{:02X}", opcode),
+        };
+        (val, state.cpu.flag_c()) // Preserve carry flag
+    });
+
+    let (result, zero, half_carry) = inc_8bit(old_val);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // INC preserves carry flag, sets Z=result==0, N=0, H=half_carry
+        state.cpu.set_flags(zero, false, half_carry, carry_flag);
+    });
+}
+
+async fn execute_inc_hl() {
+    // INC (HL) - 3 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let (result, zero, half_carry) = inc_8bit(old_val);
+    let carry_flag = with_state(|state| state.cpu.flag_c()); // Preserve carry flag
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // INC preserves carry flag, sets Z=result==0, N=0, H=half_carry
+        state.cpu.set_flags(zero, false, half_carry, carry_flag);
+    });
+}
+
+async fn execute_dec_r(opcode: u8) {
+    // DEC r - 1 M-cycle total
+    // Decode which register based on opcode bits 5-3
+    let reg_bits = (opcode >> 3) & 0b111;
+
+    let (old_val, carry_flag) = with_state(|state| {
+        let val = match reg_bits {
+            0b000 => state.cpu.b, // DEC B (0x05)
+            0b001 => state.cpu.c, // DEC C (0x0D)
+            0b010 => state.cpu.d, // DEC D (0x15)
+            0b011 => state.cpu.e, // DEC E (0x1D)
+            0b100 => state.cpu.h, // DEC H (0x25)
+            0b101 => state.cpu.l, // DEC L (0x2D)
+            0b111 => state.cpu.a, // DEC A (0x3D)
+            _ => panic!("Invalid DEC r opcode: 0x{:02X}", opcode),
+        };
+        (val, state.cpu.flag_c()) // Preserve carry flag
+    });
+
+    let (result, zero, half_carry) = dec_8bit(old_val);
+
+    with_state_mut(|state| {
+        match reg_bits {
+            0b000 => state.cpu.b = result,
+            0b001 => state.cpu.c = result,
+            0b010 => state.cpu.d = result,
+            0b011 => state.cpu.e = result,
+            0b100 => state.cpu.h = result,
+            0b101 => state.cpu.l = result,
+            0b111 => state.cpu.a = result,
+            _ => unreachable!(),
+        }
+        // DEC preserves carry flag, sets Z=result==0, N=1, H=half_carry
+        state.cpu.set_flags(zero, true, half_carry, carry_flag);
+    });
+}
+
+async fn execute_dec_hl() {
+    // DEC (HL) - 3 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let old_val = memory_read(hl_addr).await;
+
+    let (result, zero, half_carry) = dec_8bit(old_val);
+    let carry_flag = with_state(|state| state.cpu.flag_c()); // Preserve carry flag
+
+    // M3: Write result back to memory
+    memory_write(hl_addr, result).await;
+
+    with_state_mut(|state| {
+        // DEC preserves carry flag, sets Z=result==0, N=1, H=half_carry
+        state.cpu.set_flags(zero, true, half_carry, carry_flag);
+    });
+}
+
+async fn execute_and_r(opcode: u8) {
+    // AND r - 1 or 2 M-cycles total depending on operand
+    let reg_bits = opcode & 0b111;
+
+    if reg_bits == 0b110 {
+        // AND (HL) - 2 M-cycles total
+        execute_and_hl().await;
+        return;
+    }
+
+    let (a_val, operand) = with_state(|state| {
+        let a = state.cpu.a;
+        let op = match reg_bits {
+            0b000 => state.cpu.b, // AND B (0xA0)
+            0b001 => state.cpu.c, // AND C (0xA1)
+            0b010 => state.cpu.d, // AND D (0xA2)
+            0b011 => state.cpu.e, // AND E (0xA3)
+            0b100 => state.cpu.h, // AND H (0xA4)
+            0b101 => state.cpu.l, // AND L (0xA5)
+            0b111 => state.cpu.a, // AND A (0xA7)
+            _ => unreachable!(),
+        };
+        (a, op)
+    });
+
+    let result = a_val & operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // AND sets Z=result==0, N=0, H=1, C=0
+        state.cpu.set_flags(zero, false, true, false);
+    });
+}
+
+async fn execute_and_hl() {
+    // AND (HL) - 2 M-cycles total
+    // M2: Read from memory at HL
+    let hl_addr = with_state(|state| state.cpu.hl());
+    let operand = memory_read(hl_addr).await;
+
+    let a_val = with_state(|state| state.cpu.a);
+    let result = a_val & operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // AND sets Z=result==0, N=0, H=1, C=0
+        state.cpu.set_flags(zero, false, true, false);
+    });
+}
+
+async fn execute_and_n() {
+    // AND n - 2 M-cycles total
+    // M2: Read immediate value
+    let operand = fetch().await;
+
+    let a_val = with_state(|state| state.cpu.a);
+    let result = a_val & operand;
+    let zero = result == 0;
+
+    with_state_mut(|state| {
+        state.cpu.a = result;
+        // AND sets Z=result==0, N=0, H=1, C=0
+        state.cpu.set_flags(zero, false, true, false);
+    });
+}
+
 async fn decode_and_execute(opcode: u8) {
     match opcode {
         // LD r, n instructions (0b00xxx110)
@@ -702,6 +958,16 @@ async fn decode_and_execute(opcode: u8) {
         0xD6 => execute_sub_n().await,              // SUB n
         0x98..=0x9F => execute_sbc_r(opcode).await, // SBC r (includes SBC (HL) at 0x9E)
         0xDE => execute_sbc_n().await,              // SBC n
+        0xB8..=0xBF => execute_cp_r(opcode).await,  // CP r (includes CP (HL) at 0xBE)
+        0xFE => execute_cp_n().await,               // CP n
+        // Increment/Decrement instructions
+        0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x3C => execute_inc_r(opcode).await, // INC r
+        0x34 => execute_inc_hl().await,            // INC (HL)
+        0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x3D => execute_dec_r(opcode).await, // DEC r
+        0x35 => execute_dec_hl().await,            // DEC (HL)
+        // Logical instructions
+        0xA0..=0xA7 => execute_and_r(opcode).await, // AND r (includes AND (HL) at 0xA6)
+        0xE6 => execute_and_n().await,             // AND n
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
