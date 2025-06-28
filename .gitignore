@@ -77,4 +77,4 @@ rust-project.json
 # End of https://www.toptal.com/developers/gitignore/api/macos,rust,rust-analyzer,visualstudiocode
 
 .claude
-carts
+roms
