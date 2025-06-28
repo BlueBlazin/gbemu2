@@ -1,5 +1,6 @@
 use crate::driver::sleep;
 use crate::emulator::{with_state, with_state_mut};
+use crate::interrupts;
 
 async fn memory_read(address: u16) -> u8 {
     sleep(4).await; // Memory read takes 4 cycles
@@ -2163,6 +2164,9 @@ async fn execute_ret() {
         state.cpu.sp = sp;
         state.cpu.pc = pc;
     });
+
+    // Enable interrupts (RETI specific behavior)
+    interrupts::execute_reti();
 }
 
 async fn execute_ret_cc(opcode: u8) {
@@ -2226,9 +2230,22 @@ async fn execute_reti() {
     with_state_mut(|state| {
         state.cpu.sp = sp;
         state.cpu.pc = pc;
-        // TODO: Set IME (Interrupt Master Enable) flag to 1
-        // This will be implemented when we add interrupt support
     });
+
+    // Enable interrupts (RETI specific behavior)
+    interrupts::execute_reti();
+}
+
+async fn execute_ei() {
+    // EI - 1 M-cycle
+    // Enable interrupts with delay
+    interrupts::execute_ei();
+}
+
+async fn execute_di() {
+    // DI - 1 M-cycle
+    // Disable interrupts immediately
+    interrupts::execute_di();
 }
 
 async fn execute_rst_n(opcode: u8) {
@@ -2378,6 +2395,9 @@ async fn decode_and_execute(opcode: u8) {
         0xC0 | 0xC8 | 0xD0 | 0xD8 => execute_ret_cc(opcode).await, // RET cc
         0xD9 => execute_reti().await,  // RETI
         0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => execute_rst_n(opcode).await, // RST n
+        // Interrupt control
+        0xF3 => execute_di().await, // DI
+        0xFB => execute_ei().await, // EI
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
@@ -2388,7 +2408,17 @@ async fn decode_and_execute(opcode: u8) {
 
 pub async fn cpu() {
     loop {
+        // Check for pending interrupts before executing instruction
+        if let Some(interrupt) = interrupts::check_interrupts() {
+            interrupts::handle_interrupt(interrupt).await;
+            continue;
+        }
+
+        // Fetch and execute instruction
         let instruction = fetch().await;
         decode_and_execute(instruction).await;
+
+        // Process EI delay after instruction execution
+        interrupts::process_ei_delay();
     }
 }

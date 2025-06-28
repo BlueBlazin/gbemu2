@@ -541,7 +541,8 @@ async fn execute_vblank_scanline() {
         state.ppu.update_lyc_ly_flag();
     });
 
-    // TODO: Trigger VBlank interrupt if enabled
+    // Trigger VBlank interrupt
+    crate::interrupts::request_vblank_interrupt();
 
     // Wait for full scanline duration
     sleep(DOTS_PER_SCANLINE as usize).await;
@@ -554,7 +555,11 @@ async fn execute_oam_scan() {
         state.ppu.update_lyc_ly_flag();
     });
 
-    // TODO: Trigger Mode 2 interrupt if enabled
+    // Trigger LCD interrupt if enabled for Mode 2
+    let mode_2_int = with_state(|state| state.ppu.mode_2_int_select());
+    if mode_2_int {
+        crate::interrupts::request_lcd_interrupt();
+    }
 
     // Scan OAM for objects on current scanline
     let selected_objects = scan_oam_for_objects().await;
@@ -569,7 +574,7 @@ async fn execute_drawing() {
     // Set mode to drawing
     with_state_mut(|state| state.ppu.set_mode(MODE_DRAWING));
 
-    // TODO: Trigger Mode 3 interrupt if enabled
+    // Mode 3 doesn't trigger interrupts directly
 
     // Calculate drawing duration based on penalties
     let drawing_dots = calculate_drawing_duration().await;
@@ -585,7 +590,11 @@ async fn execute_hblank() {
     // Set mode to HBlank
     with_state_mut(|state| state.ppu.set_mode(MODE_HBLANK));
 
-    // TODO: Trigger Mode 0 interrupt if enabled
+    // Trigger LCD interrupt if enabled for Mode 0
+    let mode_0_int = with_state(|state| state.ppu.mode_0_int_select());
+    if mode_0_int {
+        crate::interrupts::request_lcd_interrupt();
+    }
 
     // Calculate remaining dots for HBlank
     let current_dots = with_state(|state| state.ppu.dots);

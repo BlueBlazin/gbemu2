@@ -70,14 +70,17 @@ impl MMU {
             // Not Usable (0xFEA0-0xFEFF) - return 0xFF
             0xFEA0..=0xFEFF => 0xFF,
 
-            // I/O Registers (0xFF00-0xFF7F) - TODO: implement proper I/O handling
-            0xFF00..=0xFF7F => self.io_registers[(address - 0xFF00) as usize],
+            // I/O Registers (0xFF00-0xFF7F)
+            0xFF00..=0xFF7F => {
+                // Use I/O register system for proper handling
+                crate::io::read_io_register(address)
+            }
 
             // High RAM (0xFF80-0xFFFE)
             0xFF80..=0xFFFE => self.hram[(address - 0xFF80) as usize],
 
-            // Interrupt Enable Register (0xFFFF) - TODO: implement interrupts
-            0xFFFF => self.ie_register,
+            // Interrupt Enable Register (0xFFFF)
+            0xFFFF => crate::io::read_io_register(address),
         }
     }
 
@@ -120,10 +123,10 @@ impl MMU {
             // Not Usable (0xFEA0-0xFEFF) - ignore writes
             0xFEA0..=0xFEFF => {}
 
-            // I/O Registers (0xFF00-0xFF7F) - TODO: implement proper I/O handling
+            // I/O Registers (0xFF00-0xFF7F)
             0xFF00..=0xFF7F => {
-                self.io_registers[(address - 0xFF00) as usize] = value;
-                // TODO: handle specific I/O register writes (joypad, timer, LCD, etc.)
+                // Use I/O register system for proper handling
+                crate::io::write_io_register(address, value);
             }
 
             // High RAM (0xFF80-0xFFFE)
@@ -131,10 +134,9 @@ impl MMU {
                 self.hram[(address - 0xFF80) as usize] = value;
             }
 
-            // Interrupt Enable Register (0xFFFF) - TODO: implement interrupts
+            // Interrupt Enable Register (0xFFFF)
             0xFFFF => {
-                self.ie_register = value;
-                // TODO: handle interrupt enable changes
+                crate::io::write_io_register(address, value);
             }
         }
     }
