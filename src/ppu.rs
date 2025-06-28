@@ -110,9 +110,10 @@ pub struct PpuState {
     bg_fifo: PixelFifo,
     obj_fifo: PixelFifo,
     fetcher: PixelFetcher,
-    pixel_x: u8,               // Current pixel X position (0-159)
-    window_triggered: bool,    // Whether window has been triggered this scanline
-    scx_penalty_applied: bool, // Whether SCX penalty has been applied
+    pixel_x: u8,                           // Current pixel X position (0-159)
+    window_triggered: bool,                // Whether window has been triggered this scanline
+    scx_penalty_applied: bool,             // Whether SCX penalty has been applied
+    selected_objects: Vec<SelectedObject>, // Objects selected during OAM scan for current scanline
 }
 
 impl PpuState {
@@ -141,6 +142,7 @@ impl PpuState {
             pixel_x: 0,
             window_triggered: false,
             scx_penalty_applied: false,
+            selected_objects: Vec::new(),
         }
     }
 
@@ -564,7 +566,10 @@ async fn execute_oam_scan() {
     // Scan OAM for objects on current scanline
     let selected_objects = scan_oam_for_objects().await;
 
-    // TODO: Store selected objects for use in drawing mode
+    // Store selected objects for use in drawing mode
+    with_state_mut(|state| {
+        state.ppu.selected_objects = selected_objects;
+    });
 
     // Wait for OAM scan duration
     sleep(OAM_SCAN_DOTS as usize).await;
@@ -645,11 +650,55 @@ async fn calculate_drawing_duration() -> u16 {
     let scx_penalty = with_state(|state| (state.ppu.scx % 8) as u16);
     dots += scx_penalty;
 
-    // TODO: Penalty 2: Window rendering (6 dots when window starts)
-    // TODO: Penalty 3: Object rendering (6-11 dots per object)
+    // Penalty 2: Window rendering (6 dots when window starts)
+    let window_penalty = with_state(|state| {
+        if state.ppu.should_render_window() {
+            6 // Window incurs 6-dot penalty when it starts
+        } else {
+            0
+        }
+    });
+    dots += window_penalty;
+
+    // Penalty 3: Object rendering (6-11 dots per object)
+    let object_penalty = with_state(|state| {
+        let selected_objects = &state.ppu.selected_objects;
+        calculate_object_penalties(selected_objects)
+    });
+    dots += object_penalty;
 
     // Ensure we don't exceed maximum
     dots.min(DRAWING_MAX_DOTS)
+}
+
+fn calculate_object_penalties(selected_objects: &[SelectedObject]) -> u16 {
+    let mut penalty = 0;
+
+    let scx = with_state(|state| state.ppu.scx);
+
+    for obj in selected_objects {
+        // Only the object's leftmost pixel matters, transparent or not
+        let obj_x = obj.x.saturating_sub(8); // Convert from OAM coordinate to screen coordinate
+
+        if obj_x == 0 && obj.x == 0 {
+            // Special case: OBJ with OAM X position of 0 (completely off left side)
+            penalty += 11;
+        } else {
+            // Determine the tile that the pixel is within (affected by horizontal scrolling)
+            let _tile_offset = (obj_x + scx) / 8;
+            let pixels_right_of_obj = 8 - ((obj_x + scx) % 8);
+
+            // Subtract 2 and take max with 0 for waiting for BG fetch to finish
+            let bg_fetch_penalty = pixels_right_of_obj.saturating_sub(2);
+
+            // Flat 6-dot penalty for fetching the object's tile
+            let fetch_penalty = 6;
+
+            penalty += bg_fetch_penalty as u16 + fetch_penalty;
+        }
+    }
+
+    penalty
 }
 
 async fn render_scanline() {
@@ -661,6 +710,7 @@ async fn render_scanline() {
         state.ppu.pixel_x = 0;
         state.ppu.window_triggered = false;
         state.ppu.scx_penalty_applied = false;
+        state.ppu.selected_objects.clear();
     });
 
     // Apply SCX penalty if needed
@@ -870,12 +920,165 @@ async fn check_window_trigger() {
 }
 
 async fn process_objects_at_pixel() {
-    // TODO: Implement object processing
-    // This is complex and involves:
-    // - Finding objects at current pixel
-    // - Fetching object tile data
-    // - Mixing with OAM FIFO
-    // - Handling penalties and priority
+    let pixel_x = with_state(|state| state.ppu.pixel_x);
+
+    // Find objects at current pixel position
+    let objects_at_pixel = with_state(|state| {
+        state
+            .ppu
+            .selected_objects
+            .iter()
+            .filter(|obj| {
+                let obj_x = obj.x.saturating_sub(8); // Convert OAM coordinate to screen coordinate
+                let obj_end = obj_x + 8;
+                pixel_x >= obj_x && pixel_x < obj_end
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+
+    if objects_at_pixel.is_empty() {
+        return;
+    }
+
+    // Process each object at this pixel (in priority order)
+    for obj in objects_at_pixel {
+        process_single_object(&obj).await;
+    }
+}
+
+async fn process_single_object(obj: &SelectedObject) {
+    let (_pixel_x, ly, scx, obj_size) = with_state(|state| {
+        (
+            state.ppu.pixel_x,
+            state.ppu.ly,
+            state.ppu.scx,
+            state.ppu.obj_size(),
+        )
+    });
+
+    // Advance fetcher one step until it's at step 5 or until the background FIFO is not empty
+    while with_state(|state| {
+        state.ppu.fetcher.step != FetcherStep::Push && state.ppu.bg_fifo.is_empty()
+    }) {
+        step_fetcher().await;
+    }
+
+    // Handle SCX penalty for objects at X coordinate 0
+    let obj_x = obj.x.saturating_sub(8);
+    if obj_x == 0 && scx & 7 > 0 {
+        let penalty = scx & 7;
+        sleep(penalty as usize).await;
+    }
+
+    // Advance fetcher two steps with penalties
+    step_fetcher().await; // First advancement (1 dot)
+    sleep(3).await; // Second advancement (3 dots)
+
+    // Fetch object tile data
+    let (tile_data_low, tile_data_high) = fetch_object_tile_data(obj, ly, obj_size).await;
+
+    // Ensure OAM FIFO has at least 8 pixels
+    while with_state(|state| state.ppu.obj_fifo.len() < 8) {
+        with_state_mut(|state| state.ppu.obj_fifo.fill_with_transparent(1));
+    }
+
+    // Mix object pixels into OAM FIFO
+    mix_object_pixels_into_fifo(obj, tile_data_low, tile_data_high, ly, obj_size).await;
+}
+
+async fn fetch_object_tile_data(obj: &SelectedObject, ly: u8, obj_size: bool) -> (u8, u8) {
+    let obj_height = if obj_size { 16 } else { 8 };
+    let obj_y = obj.y.saturating_sub(16);
+    let tile_line = if obj_y <= ly { ly - obj_y } else { 0 };
+
+    // Handle Y flip
+    let actual_tile_line = if (obj.attributes & 0x40) != 0 {
+        (obj_height - 1) - tile_line
+    } else {
+        tile_line
+    };
+
+    // Calculate tile index for 8x16 mode
+    let tile_index = if obj_size {
+        // 8x16 mode: use even tiles for top half, odd for bottom half
+        if actual_tile_line < 8 {
+            obj.tile_index & 0xFE // Even tile (top half)
+        } else {
+            obj.tile_index | 0x01 // Odd tile (bottom half)
+        }
+    } else {
+        obj.tile_index
+    };
+
+    // Objects always use $8000 addressing
+    let tile_addr = 0x8000 + (tile_index as u16 * 16);
+    let line_in_tile = actual_tile_line % 8;
+    let data_addr = tile_addr + (line_in_tile as u16 * 2);
+
+    // Fetch tile data with cycle timing
+    sleep(1).await; // Lower address fetch
+    let tile_data_low = if can_access_vram() {
+        ppu_vram_read(data_addr).await
+    } else {
+        0xFF
+    };
+
+    let tile_data_high = if can_access_vram() {
+        ppu_vram_read(data_addr + 1).await
+    } else {
+        0xFF
+    };
+
+    sleep(1).await; // Exit object fetch penalty
+
+    (tile_data_low, tile_data_high)
+}
+
+async fn mix_object_pixels_into_fifo(
+    obj: &SelectedObject,
+    tile_data_low: u8,
+    tile_data_high: u8,
+    _ly: u8,
+    _obj_size: bool,
+) {
+    let pixel_x = with_state(|state| state.ppu.pixel_x);
+    let obj_x = obj.x.saturating_sub(8);
+
+    // Calculate which pixels of the tile to mix
+    let start_bit = if pixel_x >= obj_x { pixel_x - obj_x } else { 0 };
+
+    // Generate pixels for the object tile row
+    for bit_pos in start_bit..8.min(start_bit + 8) {
+        let bit = if (obj.attributes & 0x20) != 0 {
+            // X flip: start from LSB
+            bit_pos
+        } else {
+            // Normal: start from MSB
+            7 - bit_pos
+        };
+
+        let low_bit = (tile_data_low >> bit) & 1;
+        let high_bit = (tile_data_high >> bit) & 1;
+        let color = (high_bit << 1) | low_bit;
+
+        // Get palette selection
+        let palette = (obj.attributes & 0x10) != 0; // DMG palette bit
+        let bg_priority = (obj.attributes & 0x80) != 0; // Priority bit
+
+        let obj_pixel = FifoPixel::new(color, palette, bg_priority);
+
+        // Mix with existing pixel in OAM FIFO if conditions are met
+        with_state_mut(|state| {
+            if let Some(existing_pixel) = state.ppu.obj_fifo.pixels.get_mut(bit_pos as usize) {
+                // Replace if target object pixel is not transparent and
+                // (existing pixel is transparent OR existing pixel has higher priority)
+                if color != 0 && (existing_pixel.color == 0 || !existing_pixel.bg_priority) {
+                    *existing_pixel = obj_pixel;
+                }
+            }
+        });
+    }
 }
 
 async fn render_pixel() {
