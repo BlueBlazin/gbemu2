@@ -99,23 +99,28 @@ impl MMU {
                 self.wram[(mirrored_addr & 0x1FFF) as usize]
             }
 
-            // Object Attribute Memory (0xFE00-0xFE9F) - delegated to PPU
+            // Object Attribute Memory (0xFE00-0xFE9F) - delegated to PPU with access restrictions
             0xFE00..=0xFE9F => {
-                crate::emulator::with_state(|state| {
-                    let oam_index = ((address - 0xFE00) / 4) as usize;
-                    let byte_offset = (address - 0xFE00) % 4;
-                    if oam_index < 40 {
-                        match byte_offset {
-                            0 => state.ppu.oam[oam_index].y,
-                            1 => state.ppu.oam[oam_index].x,
-                            2 => state.ppu.oam[oam_index].tile_index,
-                            3 => state.ppu.oam[oam_index].attributes,
-                            _ => 0xFF,
+                // Use proper PPU OAM access that respects mode restrictions
+                if crate::ppu::can_access_oam() {
+                    crate::emulator::with_state(|state| {
+                        let oam_index = ((address - 0xFE00) / 4) as usize;
+                        let byte_offset = (address - 0xFE00) % 4;
+                        if oam_index < 40 {
+                            match byte_offset {
+                                0 => state.ppu.oam[oam_index].y,
+                                1 => state.ppu.oam[oam_index].x,
+                                2 => state.ppu.oam[oam_index].tile_index,
+                                3 => state.ppu.oam[oam_index].attributes,
+                                _ => 0xFF,
+                            }
+                        } else {
+                            0xFF
                         }
-                    } else {
-                        0xFF
-                    }
-                })
+                    })
+                } else {
+                    0xFF // OAM not accessible during certain PPU modes
+                }
             }
 
             // Not Usable (0xFEA0-0xFEFF) - return 0xFF
@@ -196,21 +201,25 @@ impl MMU {
                 self.wram[(mirrored_addr & 0x1FFF) as usize] = value;
             }
 
-            // Object Attribute Memory (0xFE00-0xFE9F) - delegated to PPU
+            // Object Attribute Memory (0xFE00-0xFE9F) - delegated to PPU with access restrictions
             0xFE00..=0xFE9F => {
-                crate::emulator::with_state_mut(|state| {
-                    let oam_index = ((address - 0xFE00) / 4) as usize;
-                    let byte_offset = (address - 0xFE00) % 4;
-                    if oam_index < 40 {
-                        match byte_offset {
-                            0 => state.ppu.oam[oam_index].y = value,
-                            1 => state.ppu.oam[oam_index].x = value,
-                            2 => state.ppu.oam[oam_index].tile_index = value,
-                            3 => state.ppu.oam[oam_index].attributes = value,
-                            _ => {},
+                // Only allow OAM writes when PPU allows access
+                if crate::ppu::can_access_oam() {
+                    crate::emulator::with_state_mut(|state| {
+                        let oam_index = ((address - 0xFE00) / 4) as usize;
+                        let byte_offset = (address - 0xFE00) % 4;
+                        if oam_index < 40 {
+                            match byte_offset {
+                                0 => state.ppu.oam[oam_index].y = value,
+                                1 => state.ppu.oam[oam_index].x = value,
+                                2 => state.ppu.oam[oam_index].tile_index = value,
+                                3 => state.ppu.oam[oam_index].attributes = value,
+                                _ => {},
+                            }
                         }
-                    }
-                });
+                    });
+                }
+                // Writes are ignored when OAM is not accessible
             }
 
             // Not Usable (0xFEA0-0xFEFF) - ignore writes
