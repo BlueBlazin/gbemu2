@@ -260,7 +260,7 @@ async fn execute_ld_r_r(opcode: u8) {
     // Opcode format: 01xxxyyy where xxx = destination, yyy = source
     let dest_bits = (opcode >> 3) & 0b111;
     let src_bits = opcode & 0b111;
-    
+
     // Get source value
     let value = with_state(|state| {
         match src_bits {
@@ -274,7 +274,7 @@ async fn execute_ld_r_r(opcode: u8) {
             _ => unreachable!(), // 0b110 is (HL), handled separately
         }
     });
-    
+
     // Set destination register
     with_state_mut(|state| {
         match dest_bits {
