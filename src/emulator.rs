@@ -2,6 +2,7 @@ use crate::cpu;
 use crate::driver::Driver;
 use crate::ppu;
 use crate::state::EmulatorState;
+use crate::timer;
 use std::cell::RefCell;
 
 thread_local! {
@@ -38,6 +39,9 @@ pub fn run_emulator() {
 
     // Spawn PPU component
     driver.spawn(ppu::ppu());
+
+    // Spawn Timer component
+    driver.spawn(timer::timer());
 
     // TODO: Add other components (APU, etc.)
 

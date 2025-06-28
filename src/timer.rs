@@ -1,0 +1,266 @@
+use crate::driver::sleep;
+use crate::emulator::{with_state, with_state_mut};
+use crate::interrupts;
+
+// Timer register addresses
+pub const DIV_REGISTER: u16 = 0xFF04; // Divider register
+pub const TIMA_REGISTER: u16 = 0xFF05; // Timer counter
+pub const TMA_REGISTER: u16 = 0xFF06; // Timer modulo
+pub const TAC_REGISTER: u16 = 0xFF07; // Timer control
+
+// Timer frequencies (in M-cycles between increments)
+const TIMER_FREQ_4096: u16 = 256; // 00: 4096 Hz
+const TIMER_FREQ_262144: u16 = 4; // 01: 262144 Hz
+const TIMER_FREQ_65536: u16 = 16; // 10: 65536 Hz
+const TIMER_FREQ_16384: u16 = 64; // 11: 16384 Hz
+
+// DIV frequency (16384 Hz = every 64 M-cycles)
+const DIV_FREQ: u16 = 64;
+
+#[derive(Debug, Clone)]
+pub struct TimerState {
+    // Registers
+    pub div: u8,  // FF04: Divider register (read-only upper 8 bits of system counter)
+    pub tima: u8, // FF05: Timer counter
+    pub tma: u8,  // FF06: Timer modulo
+    pub tac: u8,  // FF07: Timer control
+
+    // Internal state
+    pub system_counter: u16, // Full 16-bit system counter (DIV is upper 8 bits)
+    pub timer_cycles: u16,   // Cycles since last TIMA increment
+    pub overflow_pending: bool, // True when TIMA overflow needs to be processed next cycle
+    pub stop_mode: bool,     // True when in STOP mode (counter paused)
+}
+
+impl TimerState {
+    pub fn new() -> Self {
+        Self {
+            div: 0,
+            tima: 0,
+            tma: 0,
+            tac: 0,
+            system_counter: 0,
+            timer_cycles: 0,
+            overflow_pending: false,
+            stop_mode: false,
+        }
+    }
+
+    // TAC register bit accessors
+    pub fn timer_enable(&self) -> bool {
+        (self.tac & 0x04) != 0
+    }
+
+    pub fn clock_select(&self) -> u8 {
+        self.tac & 0x03
+    }
+
+    // Get timer frequency based on clock select
+    pub fn get_timer_frequency(&self) -> u16 {
+        match self.clock_select() {
+            0b00 => TIMER_FREQ_4096,   // 4096 Hz
+            0b01 => TIMER_FREQ_262144, // 262144 Hz
+            0b10 => TIMER_FREQ_65536,  // 65536 Hz
+            0b11 => TIMER_FREQ_16384,  // 16384 Hz
+            _ => unreachable!(),
+        }
+    }
+
+    // Check if selected bit of system counter is set
+    pub fn is_timer_bit_set(&self) -> bool {
+        let bit_position = match self.clock_select() {
+            0b00 => 7, // Bit 7 for 256 M-cycle frequency
+            0b01 => 1, // Bit 1 for 4 M-cycle frequency
+            0b10 => 3, // Bit 3 for 16 M-cycle frequency
+            0b11 => 5, // Bit 5 for 64 M-cycle frequency
+            _ => unreachable!(),
+        };
+        (self.system_counter & (1 << bit_position)) != 0
+    }
+
+    // Handle timer tick (when selected bit transitions from 1 to 0)
+    pub fn handle_timer_tick(&mut self) {
+        if self.timer_enable() {
+            let (result, overflow) = self.tima.overflowing_add(1);
+            self.tima = result;
+
+            if overflow {
+                // TIMA overflowed - will be reset to TMA next cycle
+                self.overflow_pending = true;
+            }
+        }
+    }
+
+    // Process pending timer overflow
+    pub fn process_timer_overflow(&mut self) {
+        if self.overflow_pending {
+            self.tima = self.tma;
+            self.overflow_pending = false;
+            // Request timer interrupt
+            interrupts::request_timer_interrupt();
+        }
+    }
+
+    // Write to DIV register (resets system counter)
+    pub fn write_div(&mut self, _value: u8) {
+        // Writing any value to DIV resets the entire system counter
+        let old_timer_bit = self.is_timer_bit_set();
+        self.system_counter = 0;
+        self.div = 0;
+
+        // If timer bit was set before reset, this triggers a timer tick
+        if old_timer_bit {
+            self.handle_timer_tick();
+        }
+    }
+
+    // Write to TIMA register
+    pub fn write_tima(&mut self, value: u8) {
+        // If overflow is pending, ignore the write (the overflow will proceed)
+        if !self.overflow_pending {
+            self.tima = value;
+        }
+    }
+
+    // Write to TMA register
+    pub fn write_tma(&mut self, value: u8) {
+        self.tma = value;
+
+        // If overflow is pending and TMA is written on same cycle,
+        // the new value will be used for the reset
+        // (This is handled automatically since we use self.tma in process_timer_overflow)
+    }
+
+    // Write to TAC register
+    pub fn write_tac(&mut self, value: u8) {
+        let old_enable = self.timer_enable();
+        let old_timer_bit = self.is_timer_bit_set();
+
+        self.tac = value & 0x07; // Only bits 0-2 are writable
+
+        let new_enable = self.timer_enable();
+        let new_timer_bit = self.is_timer_bit_set();
+
+        // Check for timer tick conditions:
+        // 1. Disabling timer when selected bit is set
+        // 2. Changing clock select from set bit to unset bit
+        if (old_enable && !new_enable && old_timer_bit) || (old_timer_bit && !new_timer_bit) {
+            self.handle_timer_tick();
+        }
+    }
+
+    // Enter STOP mode
+    pub fn enter_stop_mode(&mut self) {
+        self.stop_mode = true;
+    }
+
+    // Exit STOP mode
+    pub fn exit_stop_mode(&mut self) {
+        self.stop_mode = false;
+    }
+}
+
+// Main timer async function
+pub async fn timer() {
+    loop {
+        // Process one M-cycle of timer operation
+        step_timer().await;
+
+        // Sleep for one M-cycle (4 cycles)
+        sleep(4).await;
+    }
+}
+
+async fn step_timer() {
+    // Check if in STOP mode
+    let stop_mode = with_state(|state| state.timer.stop_mode);
+    if stop_mode {
+        return; // Don't update counters in STOP mode
+    }
+
+    // First, process any pending timer overflow from previous cycle
+    with_state_mut(|state| {
+        state.timer.process_timer_overflow();
+    });
+
+    // Get current timer bit state before incrementing
+    let old_timer_bit = with_state(|state| state.timer.is_timer_bit_set());
+
+    // Increment system counter (this happens every M-cycle)
+    with_state_mut(|state| {
+        state.timer.system_counter = state.timer.system_counter.wrapping_add(1);
+
+        // Update DIV register (upper 8 bits of system counter)
+        state.timer.div = (state.timer.system_counter >> 8) as u8;
+    });
+
+    // Check for timer tick (selected bit transition from 1 to 0)
+    let new_timer_bit = with_state(|state| state.timer.is_timer_bit_set());
+
+    if old_timer_bit && !new_timer_bit {
+        with_state_mut(|state| {
+            state.timer.handle_timer_tick();
+        });
+    }
+}
+
+// I/O register handlers for timer registers
+pub fn read_timer_register(address: u16) -> u8 {
+    with_state(|state| {
+        match address {
+            DIV_REGISTER => state.timer.div,
+            TIMA_REGISTER => {
+                if state.timer.overflow_pending {
+                    // During overflow cycle, TIMA reads as 0x00
+                    0x00
+                } else {
+                    state.timer.tima
+                }
+            }
+            TMA_REGISTER => state.timer.tma,
+            TAC_REGISTER => state.timer.tac | 0xF8, // Upper bits read as 1
+            _ => 0xFF,                              // Invalid register
+        }
+    })
+}
+
+pub fn write_timer_register(address: u16, value: u8) {
+    with_state_mut(|state| {
+        match address {
+            DIV_REGISTER => state.timer.write_div(value),
+            TIMA_REGISTER => state.timer.write_tima(value),
+            TMA_REGISTER => state.timer.write_tma(value),
+            TAC_REGISTER => state.timer.write_tac(value),
+            _ => {} // Invalid register, ignore
+        }
+    });
+}
+
+// Helper functions for other components
+pub fn request_timer_interrupt() {
+    interrupts::request_timer_interrupt();
+}
+
+pub fn enter_stop_mode() {
+    with_state_mut(|state| {
+        state.timer.enter_stop_mode();
+    });
+}
+
+pub fn exit_stop_mode() {
+    with_state_mut(|state| {
+        state.timer.exit_stop_mode();
+    });
+}
+
+// Get current timer state for debugging
+pub fn get_timer_state() -> (u8, u8, u8, u8) {
+    with_state(|state| {
+        (
+            state.timer.div,
+            state.timer.tima,
+            state.timer.tma,
+            state.timer.tac,
+        )
+    })
+}

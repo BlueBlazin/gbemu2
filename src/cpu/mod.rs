@@ -2355,11 +2355,19 @@ async fn execute_halt() {
 }
 
 async fn execute_stop() {
-    // STOP - Stops the system
+    // STOP - Stops the system and main clocks
+    // This stops the timer/divider and puts the system in low power mode
+
+    // Enter STOP mode for timer
+    crate::timer::enter_stop_mode();
+
     // For our emulator, we'll just halt indefinitely
     // In a real Game Boy, this stops the main clock and puts the system in low power mode
     loop {
         sleep(4).await; // Sleep forever
+
+        // TODO: In a real implementation, this would wake up on certain conditions
+        // like joypad input or serial communication
     }
 }
 

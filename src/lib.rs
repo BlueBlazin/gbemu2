@@ -6,3 +6,4 @@ mod io;
 mod mmu;
 mod ppu;
 mod state;
+mod timer;
