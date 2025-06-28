@@ -11,14 +11,14 @@ pub fn with_state<F, R>(f: F) -> R
 where
     F: FnOnce(&EmulatorState) -> R,
 {
-    STATE.with(|state| f(&*state.borrow()))
+    STATE.with(|state| f(&state.borrow()))
 }
 
 pub fn with_state_mut<F, R>(f: F) -> R
 where
     F: FnOnce(&mut EmulatorState) -> R,
 {
-    STATE.with(|state| f(&mut *state.borrow_mut()))
+    STATE.with(|state| f(&mut state.borrow_mut()))
 }
 
 pub fn init_emulator() {

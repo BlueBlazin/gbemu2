@@ -10,6 +10,12 @@ pub struct DmaState {
     pub request_pending: bool, // Whether a DMA request is pending
 }
 
+impl Default for DmaState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DmaState {
     pub fn new() -> Self {
         Self {

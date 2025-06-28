@@ -2299,10 +2299,6 @@ async fn execute_cb_instruction() {
         0x80..=0xBF => execute_cb_res_r(cb_opcode).await,
         // SET b, r (0xC0-0xFF)
         0xC0..=0xFF => execute_cb_set_r(cb_opcode).await,
-        _ => {
-            println!("Unimplemented CB instruction: 0x{:02X}", cb_opcode);
-            sleep(4).await;
-        }
     }
 }
 

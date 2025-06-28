@@ -1,6 +1,7 @@
 use crate::cartridge::Cartridge;
 
 #[derive(Debug)]
+#[allow(clippy::upper_case_acronyms)]
 pub struct MMU {
     // Cartridge (handles ROM and external RAM)
     pub cartridge: Option<Cartridge>,
@@ -16,6 +17,12 @@ pub struct MMU {
 
     // Interrupt Enable Register (0xFFFF)
     pub ie_register: u8, // Interrupt Enable (TODO: implement interrupts)
+}
+
+impl Default for MMU {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MMU {

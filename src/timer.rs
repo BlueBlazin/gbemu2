@@ -32,6 +32,12 @@ pub struct TimerState {
     pub stop_mode: bool,     // True when in STOP mode (counter paused)
 }
 
+impl Default for TimerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TimerState {
     pub fn new() -> Self {
         Self {

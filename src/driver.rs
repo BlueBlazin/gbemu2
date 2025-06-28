@@ -1,8 +1,12 @@
 use futures::task::Waker;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+
+// Type alias for complex future queue type
+type FutureQueue = BTreeMap<usize, Vec<Pin<Box<dyn Future<Output = ()>>>>>;
 
 // Events that can be emitted by the driver for the host emulator to handle
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,9 +24,9 @@ pub struct ExecutionResult {
 }
 
 thread_local! {
-    static CURRENT_CYCLE: RefCell<usize> = RefCell::new(0);
-    static NEXT_WAKE_CYCLE: RefCell<Option<usize>> = RefCell::new(None);
-    static PENDING_EVENT: RefCell<Option<Event>> = RefCell::new(None);
+    static CURRENT_CYCLE: RefCell<usize> = const { RefCell::new(0) };
+    static NEXT_WAKE_CYCLE: RefCell<Option<usize>> = const { RefCell::new(None) };
+    static PENDING_EVENT: RefCell<Option<Event>> = const { RefCell::new(None) };
 }
 
 #[derive(Debug)]
@@ -78,7 +82,13 @@ pub fn emit_event(event: Event) {
 
 pub struct Driver {
     clock: usize,
-    futures_queue: BTreeMap<usize, Vec<Pin<Box<dyn Future<Output = ()>>>>>,
+    futures_queue: FutureQueue,
+}
+
+impl Default for Driver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Driver {
@@ -95,7 +105,7 @@ impl Driver {
     {
         self.futures_queue
             .entry(self.clock)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(Box::pin(future));
     }
 
@@ -160,7 +170,7 @@ impl Driver {
 
                     self.futures_queue
                         .entry(wake_cycle)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(future);
                 }
 
@@ -217,7 +227,7 @@ impl Driver {
 
                     self.futures_queue
                         .entry(wake_cycle)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(future);
                 }
             }

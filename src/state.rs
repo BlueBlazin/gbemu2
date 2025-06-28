@@ -18,6 +18,12 @@ pub struct CpuState {
     pub pc: u16,
 }
 
+impl Default for CpuState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuState {
     pub fn new() -> Self {
         Self {
@@ -149,6 +155,12 @@ pub struct EmulatorState {
 
     // Legacy memory array for backward compatibility (TODO: remove after updating CPU)
     pub memory: [u8; 0x10000],
+}
+
+impl Default for EmulatorState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EmulatorState {

@@ -5,7 +5,7 @@ use crate::emulator::{with_state, with_state_mut};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InterruptType {
     VBlank = 0,
-    LCD = 1,
+    Lcd = 1,
     Timer = 2,
     Serial = 3,
     Joypad = 4,
@@ -24,6 +24,12 @@ pub struct InterruptState {
     pub ie: u8,         // Interrupt Enable register (FF00)
     pub if_reg: u8,     // Interrupt Flag register (FF0F)
     pub ei_delay: bool, // EI instruction delay flag
+}
+
+impl Default for InterruptState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InterruptState {
@@ -67,7 +73,7 @@ impl InterruptState {
             if (pending & (1 << bit)) != 0 {
                 return match bit {
                     0 => Some(InterruptType::VBlank),
-                    1 => Some(InterruptType::LCD),
+                    1 => Some(InterruptType::Lcd),
                     2 => Some(InterruptType::Timer),
                     3 => Some(InterruptType::Serial),
                     4 => Some(InterruptType::Joypad),
@@ -120,7 +126,7 @@ impl InterruptState {
 pub fn get_interrupt_handler_address(interrupt: InterruptType) -> u16 {
     match interrupt {
         InterruptType::VBlank => VBLANK_HANDLER,
-        InterruptType::LCD => LCD_HANDLER,
+        InterruptType::Lcd => LCD_HANDLER,
         InterruptType::Timer => TIMER_HANDLER,
         InterruptType::Serial => SERIAL_HANDLER,
         InterruptType::Joypad => JOYPAD_HANDLER,
@@ -179,7 +185,7 @@ pub fn request_vblank_interrupt() {
 
 pub fn request_lcd_interrupt() {
     with_state_mut(|state| {
-        state.interrupts.request_interrupt(InterruptType::LCD);
+        state.interrupts.request_interrupt(InterruptType::Lcd);
     });
 }
 

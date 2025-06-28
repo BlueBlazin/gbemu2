@@ -6,6 +6,12 @@ pub struct OamEntry {
     pub attributes: u8, // Attributes/flags
 }
 
+impl Default for OamEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OamEntry {
     pub fn new() -> Self {
         Self {
@@ -119,6 +125,12 @@ pub struct PpuState {
     window_triggered: bool,                // Whether window has been triggered this scanline
     scx_penalty_applied: bool,             // Whether SCX penalty has been applied
     selected_objects: Vec<SelectedObject>, // Objects selected during OAM scan for current scanline
+}
+
+impl Default for PpuState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PpuState {
@@ -809,7 +821,7 @@ async fn execute_get_tile() {
     } else {
         // Background coordinates
         let bg_x = ((scx / 8) + with_state(|state| state.ppu.fetcher.x)) & 0x1F;
-        let bg_y = (ly.wrapping_add(scy)) & 0xFF;
+        let bg_y = ly.wrapping_add(scy);
         (bg_x, bg_y)
     };
 
@@ -999,7 +1011,7 @@ async fn process_single_object(obj: &SelectedObject) {
 async fn fetch_object_tile_data(obj: &SelectedObject, ly: u8, obj_size: bool) -> (u8, u8) {
     let obj_height = if obj_size { 16 } else { 8 };
     let obj_y = obj.y.saturating_sub(16);
-    let tile_line = if obj_y <= ly { ly - obj_y } else { 0 };
+    let tile_line = ly.saturating_sub(obj_y);
 
     // Handle Y flip
     let actual_tile_line = if (obj.attributes & 0x40) != 0 {
@@ -1055,7 +1067,7 @@ async fn mix_object_pixels_into_fifo(
     let obj_x = obj.x.saturating_sub(8);
 
     // Calculate which pixels of the tile to mix
-    let start_bit = if pixel_x >= obj_x { pixel_x - obj_x } else { 0 };
+    let start_bit = pixel_x.saturating_sub(obj_x);
 
     // Generate pixels for the object tile row
     for bit_pos in start_bit..8.min(start_bit + 8) {
