@@ -1,14 +1,12 @@
-#[derive(Debug, Clone)]
+use crate::cartridge::Cartridge;
+
+#[derive(Debug)]
 pub struct MMU {
-    // ROM Banks (0x0000-0x7FFF)
-    pub rom_bank_00: [u8; 0x4000], // 0x0000-0x3FFF: Fixed bank
-    pub rom_bank_nn: [u8; 0x4000], // 0x4000-0x7FFF: Switchable bank (TODO: implement banking)
+    // Cartridge (handles ROM and external RAM)
+    pub cartridge: Option<Cartridge>,
 
     // Video RAM (0x8000-0x9FFF)
     pub vram: [u8; 0x2000], // 8 KiB Video RAM (TODO: connect to PPU)
-
-    // External RAM (0xA000-0xBFFF)
-    pub external_ram: [u8; 0x2000], // 8 KiB from cartridge (TODO: implement banking)
 
     // Work RAM (0xC000-0xDFFF)
     pub wram: [u8; 0x2000], // 8 KiB Work RAM
@@ -29,10 +27,8 @@ pub struct MMU {
 impl MMU {
     pub fn new() -> Self {
         Self {
-            rom_bank_00: [0; 0x4000],
-            rom_bank_nn: [0; 0x4000],
+            cartridge: None,
             vram: [0; 0x2000],
-            external_ram: [0; 0x2000],
             wram: [0; 0x2000],
             oam: [0; 0xA0],
             io_registers: [0; 0x80],
@@ -43,17 +39,17 @@ impl MMU {
 
     pub fn read(&self, address: u16) -> u8 {
         match address {
-            // ROM Bank 00 (0x0000-0x3FFF)
-            0x0000..=0x3FFF => self.rom_bank_00[(address & 0x3FFF) as usize],
-
-            // ROM Bank NN (0x4000-0x7FFF) - TODO: implement banking
-            0x4000..=0x7FFF => self.rom_bank_nn[(address & 0x3FFF) as usize],
+            // ROM and External RAM (0x0000-0x7FFF, 0xA000-0xBFFF) - handled by cartridge
+            0x0000..=0x7FFF | 0xA000..=0xBFFF => {
+                if let Some(ref cartridge) = self.cartridge {
+                    cartridge.read(address)
+                } else {
+                    0xFF // No cartridge loaded
+                }
+            }
 
             // Video RAM (0x8000-0x9FFF) - TODO: connect to PPU
             0x8000..=0x9FFF => self.vram[(address & 0x1FFF) as usize],
-
-            // External RAM (0xA000-0xBFFF) - TODO: implement banking
-            0xA000..=0xBFFF => self.external_ram[(address & 0x1FFF) as usize],
 
             // Work RAM (0xC000-0xDFFF)
             0xC000..=0xDFFF => self.wram[(address & 0x1FFF) as usize],
@@ -86,21 +82,18 @@ impl MMU {
 
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
-            // ROM Banks (0x0000-0x7FFF) - TODO: implement mapper control
-            0x0000..=0x7FFF => {
-                // ROM writes typically control banking, not actual ROM data
-                // TODO: implement cartridge mapper handling
+            // ROM and External RAM (0x0000-0x7FFF, 0xA000-0xBFFF) - handled by cartridge
+            0x0000..=0x7FFF | 0xA000..=0xBFFF => {
+                if let Some(ref mut cartridge) = self.cartridge {
+                    cartridge.write(address, value);
+                }
+                // If no cartridge loaded, ignore writes
             }
 
             // Video RAM (0x8000-0x9FFF) - TODO: connect to PPU
             0x8000..=0x9FFF => {
                 self.vram[(address & 0x1FFF) as usize] = value;
                 // TODO: notify PPU of VRAM changes
-            }
-
-            // External RAM (0xA000-0xBFFF) - TODO: implement banking
-            0xA000..=0xBFFF => {
-                self.external_ram[(address & 0x1FFF) as usize] = value;
             }
 
             // Work RAM (0xC000-0xDFFF)
@@ -141,17 +134,20 @@ impl MMU {
         }
     }
 
-    // Helper method to load ROM data (TODO: extend for proper cartridge handling)
-    pub fn load_rom(&mut self, rom_data: &[u8]) {
-        // Load first 16KB into bank 00
-        let bank_00_size = std::cmp::min(rom_data.len(), 0x4000);
-        self.rom_bank_00[..bank_00_size].copy_from_slice(&rom_data[..bank_00_size]);
+    // Load a cartridge into the MMU
+    pub fn load_cartridge(&mut self, rom_data: Vec<u8>) -> Result<(), String> {
+        let cartridge = Cartridge::new(rom_data)?;
+        self.cartridge = Some(cartridge);
+        Ok(())
+    }
 
-        // Load next 16KB into bank NN if available
-        if rom_data.len() > 0x4000 {
-            let bank_nn_size = std::cmp::min(rom_data.len() - 0x4000, 0x4000);
-            self.rom_bank_nn[..bank_nn_size]
-                .copy_from_slice(&rom_data[0x4000..0x4000 + bank_nn_size]);
-        }
+    // Remove the cartridge
+    pub fn remove_cartridge(&mut self) {
+        self.cartridge = None;
+    }
+
+    // Get cartridge info if loaded
+    pub fn get_cartridge_info(&self) -> Option<&crate::cartridge::CartridgeInfo> {
+        self.cartridge.as_ref().map(|cart| cart.get_info())
     }
 }

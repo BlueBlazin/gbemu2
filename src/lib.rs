@@ -1,3 +1,4 @@
+mod cartridge;
 mod cpu;
 mod driver;
 mod emulator;

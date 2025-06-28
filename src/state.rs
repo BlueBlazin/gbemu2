@@ -137,7 +137,7 @@ impl CpuState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EmulatorState {
     pub cpu: CpuState,
     pub mmu: MMU,
@@ -170,5 +170,18 @@ impl EmulatorState {
         self.mmu.write(address, value);
         // Also update legacy array for now (TODO: remove after CPU migration)
         self.memory[address as usize] = value;
+    }
+
+    // Cartridge management
+    pub fn load_cartridge(&mut self, rom_data: Vec<u8>) -> Result<(), String> {
+        self.mmu.load_cartridge(rom_data)
+    }
+
+    pub fn remove_cartridge(&mut self) {
+        self.mmu.remove_cartridge();
+    }
+
+    pub fn get_cartridge_info(&self) -> Option<&crate::cartridge::CartridgeInfo> {
+        self.mmu.get_cartridge_info()
     }
 }
