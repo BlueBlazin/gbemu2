@@ -36,8 +36,8 @@ impl InterruptState {
     pub fn new() -> Self {
         Self {
             ime: false,      // IME starts disabled
-            ie: 0,           // No interrupts enabled initially
-            if_reg: 0,       // No interrupts pending initially
+            ie: 0x00,        // IE = $00 (boot value)
+            if_reg: 0xE1,    // IF = $E1 (boot value)
             ei_delay: false, // No EI delay initially
         }
     }

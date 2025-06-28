@@ -27,16 +27,16 @@ impl Default for CpuState {
 impl CpuState {
     pub fn new() -> Self {
         Self {
-            a: 0,
-            f: 0,
-            b: 0,
-            c: 0,
-            d: 0,
-            e: 0,
-            h: 0,
-            l: 0,
-            sp: 0,
-            pc: 0,
+            a: 0x01,         // A = $01
+            f: 0x80,         // F = Z=1 N=0 H=0 C=0 (Z flag set, others clear)
+            b: 0x00,         // B = $00
+            c: 0x13,         // C = $13
+            d: 0x00,         // D = $00
+            e: 0xD8,         // E = $D8
+            h: 0x01,         // H = $01
+            l: 0x4D,         // L = $4D
+            sp: 0xFFFE,      // SP = $FFFE
+            pc: 0x0100,      // PC = $0100
         }
     }
 

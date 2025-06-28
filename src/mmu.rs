@@ -27,10 +27,17 @@ impl Default for MMU {
 
 impl MMU {
     pub fn new() -> Self {
+        let mut io_registers = [0; 0x80];
+        
+        // Set boot values for I/O registers
+        io_registers[0x00] = 0xCF; // P1 (FF00) = $CF
+        io_registers[0x01] = 0x00; // SB (FF01) = $00
+        io_registers[0x02] = 0x7E; // SC (FF02) = $7E
+        
         Self {
             cartridge: None,
             wram: [0; 0x2000],
-            io_registers: [0; 0x80],
+            io_registers,
             hram: [0; 0x7F],
             ie_register: 0,
         }

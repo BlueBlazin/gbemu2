@@ -144,9 +144,9 @@ impl PpuState {
             lyc: 0,
             wy: 0,
             wx: 0,
-            bgp: 0xFC,  // Default background palette
-            obp0: 0xFF, // Default object palette 0
-            obp1: 0xFF, // Default object palette 1
+            bgp: 0xFC,  // BGP = $FC (boot value)
+            obp0: 0x00, // OBP0 not specified in boot values, so default to $00
+            obp1: 0x00, // OBP1 not specified in boot values, so default to $00
             oam: [OamEntry::new(); 40],
             vram: [[0; 16]; 384], // Initialize VRAM tiles
             bg_tile_map_0: [0; 0x400], // Initialize background tile map 0

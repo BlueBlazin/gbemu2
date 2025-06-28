@@ -41,10 +41,10 @@ impl Default for TimerState {
 impl TimerState {
     pub fn new() -> Self {
         Self {
-            div: 0,
-            tima: 0,
-            tma: 0,
-            tac: 0,
+            div: 0xAB,       // DIV = $AB (boot value)
+            tima: 0x00,      // TIMA = $00 (boot value)
+            tma: 0x00,       // TMA = $00 (boot value)
+            tac: 0xF8,       // TAC = $F8 (boot value)
             system_counter: 0,
             timer_cycles: 0,
             overflow_pending: false,
