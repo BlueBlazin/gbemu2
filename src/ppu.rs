@@ -382,6 +382,25 @@ struct SelectedObject {
     attributes: u8,
 }
 
+impl SelectedObject {
+    // Attribute flag getters (same as OamEntry)
+    pub fn priority(&self) -> bool {
+        (self.attributes & 0x80) != 0
+    }
+
+    pub fn y_flip(&self) -> bool {
+        (self.attributes & 0x40) != 0
+    }
+
+    pub fn x_flip(&self) -> bool {
+        (self.attributes & 0x20) != 0
+    }
+
+    pub fn dmg_palette(&self) -> bool {
+        (self.attributes & 0x10) != 0
+    }
+}
+
 // Pixel FIFO structures
 #[derive(Debug, Clone, Copy)]
 struct FifoPixel {
@@ -722,6 +741,63 @@ fn calculate_object_penalties(selected_objects: &[SelectedObject]) -> u16 {
     penalty
 }
 
+async fn render_bg_pixel(x: u8, ly: u8) -> u8 {
+    let (scx, scy, bg_tile_map_base, tile_data_signed, bgp) = with_state(|state| {
+        (
+            state.ppu.scx,
+            state.ppu.scy,
+            state.ppu.get_bg_tile_map_base(),
+            !state.ppu.bg_window_tile_data_area(), // false = $8000 (unsigned), true = $8800 (signed)
+            state.ppu.bgp,
+        )
+    });
+
+    // Calculate background coordinates with scrolling
+    let bg_x = x.wrapping_add(scx);
+    let bg_y = ly.wrapping_add(scy);
+
+    // Calculate tile coordinates
+    let tile_x = (bg_x / 8) as u16;
+    let tile_y = (bg_y / 8) as u16;
+
+    // Calculate pixel within tile
+    let pixel_x = bg_x % 8;
+    let pixel_y = bg_y % 8;
+
+    // Get tile index from tile map
+    let tile_map_addr = bg_tile_map_base + (tile_y * 32) + tile_x;
+    let tile_index = ppu_vram_read(tile_map_addr).await;
+
+    // Calculate tile data address
+    let tile_addr = if tile_data_signed {
+        // $8800 addressing: signed tile index, base at $9000
+        let signed_index = tile_index as i8;
+        (0x9000_u16).wrapping_add((signed_index as i16 * 16) as u16)
+    } else {
+        // $8000 addressing: unsigned tile index
+        0x8000 + (tile_index as u16 * 16)
+    };
+
+    // Get tile data for this line
+    let tile_line_addr = tile_addr + (pixel_y as u16 * 2);
+    let tile_data_low = ppu_vram_read(tile_line_addr).await;
+    let tile_data_high = ppu_vram_read(tile_line_addr + 1).await;
+
+    // Extract pixel color (2 bits)
+    let bit_pos = 7 - pixel_x;
+    let low_bit = (tile_data_low >> bit_pos) & 1;
+    let high_bit = (tile_data_high >> bit_pos) & 1;
+    let pixel_color = (high_bit << 1) | low_bit;
+
+    // Apply background palette
+    apply_bg_palette(pixel_color, bgp)
+}
+
+fn apply_bg_palette(color: u8, palette: u8) -> u8 {
+    let shift = color * 2;
+    (palette >> shift) & 0x03
+}
+
 async fn render_scanline() {
     // Initialize FIFO state for the scanline
     with_state_mut(|state| {
@@ -731,15 +807,14 @@ async fn render_scanline() {
         state.ppu.pixel_x = 0;
         state.ppu.window_triggered = false;
         state.ppu.scx_penalty_applied = false;
-        state.ppu.selected_objects.clear();
     });
 
-    // Apply SCX penalty if needed
+    // Apply SCX penalty (discarding pixels from leftmost tile)
     apply_scx_penalty().await;
 
-    // Main pixel rendering loop
+    // Main pixel rendering loop using FIFO
     while with_state(|state| state.ppu.pixel_x < 160) {
-        // Ensure we have enough pixels in background FIFO
+        // Ensure we have enough pixels in background FIFO (at least 8)
         while with_state(|state| state.ppu.bg_fifo.len() < 8) {
             step_fetcher().await;
         }
@@ -747,12 +822,12 @@ async fn render_scanline() {
         // Check for window trigger
         check_window_trigger().await;
 
-        // Process objects if enabled
+        // Process objects if enabled and at current pixel position
         if with_state(|state| state.ppu.obj_enable()) {
             process_objects_at_pixel().await;
         }
 
-        // Render a pixel
+        // Render a pixel by mixing background and object FIFOs
         render_pixel().await;
 
         // Advance pixel position
@@ -763,7 +838,21 @@ async fn render_scanline() {
 async fn apply_scx_penalty() {
     let scx_penalty = with_state(|state| state.ppu.scx % 8);
     if scx_penalty > 0 {
+        // Pause rendering for SCX % 8 dots and discard that many pixels
         sleep(scx_penalty as usize).await;
+        
+        // Fill background FIFO with enough pixels to discard
+        while with_state(|state| state.ppu.bg_fifo.len() < scx_penalty as usize) {
+            step_fetcher().await;
+        }
+        
+        // Discard the required number of pixels
+        for _ in 0..scx_penalty {
+            with_state_mut(|state| {
+                state.ppu.bg_fifo.pop();
+            });
+        }
+        
         with_state_mut(|state| state.ppu.scx_penalty_applied = true);
     }
 }
@@ -804,14 +893,45 @@ async fn step_fetcher() {
 }
 
 async fn execute_get_tile() {
-    let (is_window, ly, scx, scy, window_line) = with_state(|state| {
+    let (fetcher_x, is_window, ly, scx, scy, window_line) = with_state(|state| {
         (
+            state.ppu.fetcher.x,
             state.ppu.fetcher.is_window,
             state.ppu.ly,
             state.ppu.scx,
             state.ppu.scy,
             state.ppu.window_line,
         )
+    });
+
+    // Calculate tile coordinates
+    let (tile_x, tile_y) = if is_window {
+        // Window coordinates
+        (fetcher_x as u16, window_line as u16)
+    } else {
+        // Background coordinates with scrolling
+        let bg_x = ((scx / 8) + fetcher_x) & 0x1F;
+        let bg_y = (ly.wrapping_add(scy)) as u16;
+        (bg_x as u16, bg_y)
+    };
+
+    // Get tile map base address
+    let tile_map_base = if is_window {
+        with_state(|state| state.ppu.get_window_tile_map_base())
+    } else {
+        with_state(|state| state.ppu.get_bg_tile_map_base())
+    };
+
+    // Calculate tile address in tile map
+    let tile_map_addr = tile_map_base + ((tile_y / 8) * 32) + (tile_x & 0x1F);
+    
+    // Read tile index from VRAM (or 0xFF if blocked)
+    let tile_index = ppu_vram_read(tile_map_addr).await;
+    
+    // Store tile index in fetcher
+    with_state_mut(|state| {
+        state.ppu.fetcher.tile_index = tile_index;
+        state.ppu.fetcher.y = (tile_y % 8) as u8; // Current line within tile
     });
 
     let (tile_x, tile_y) = if is_window {
@@ -1214,4 +1334,42 @@ fn can_access_oam() -> bool {
         let mode = state.ppu.ppu_mode;
         mode == MODE_HBLANK || mode == MODE_VBLANK // OAM accessible in modes 0, 1 only
     })
+}
+
+// Missing functions needed for FIFO PPU
+
+fn determine_pixel_color(bg_pixel: FifoPixel, obj_pixel: FifoPixel) -> u8 {
+    let (bg_enable, obj_enable) = with_state(|state| {
+        (state.ppu.bg_window_enable(), state.ppu.obj_enable())
+    });
+    
+    // If background is disabled, use color 0
+    let effective_bg_color = if bg_enable { bg_pixel.color } else { 0 };
+    
+    // If object is transparent or objects disabled, use background
+    if !obj_enable || obj_pixel.color == 0 {
+        let bgp = with_state(|state| state.ppu.bgp);
+        return apply_bg_palette(effective_bg_color, bgp);
+    }
+    
+    // Object pixel is opaque - check priority
+    if obj_pixel.bg_priority && effective_bg_color != 0 {
+        // Object has priority only if background pixel is 0
+        let bgp = with_state(|state| state.ppu.bgp);
+        apply_bg_palette(effective_bg_color, bgp)
+    } else {
+        // Use object pixel
+        let palette = with_state(|state| {
+            if obj_pixel.palette { state.ppu.obp1 } else { state.ppu.obp0 }
+        });
+        apply_obj_palette(obj_pixel.color, palette)
+    }
+}
+
+fn apply_obj_palette(color: u8, palette: u8) -> u8 {
+    if color == 0 {
+        return 0; // Color 0 is transparent for objects
+    }
+    let shift = color * 2;
+    (palette >> shift) & 0x03
 }
