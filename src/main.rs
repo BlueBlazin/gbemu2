@@ -1,3 +1,5 @@
+use gbemu2::emulator::run_emulator;
+
 fn main() {
-    println!("Hello, world!");
+    run_emulator();
 }

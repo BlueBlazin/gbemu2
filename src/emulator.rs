@@ -1,9 +1,6 @@
-use crate::cpu;
-use crate::dma;
-use crate::driver::Driver;
-use crate::ppu;
+use crate::driver::{Driver, Event, ExecutionResult};
 use crate::state::EmulatorState;
-use crate::timer;
+use crate::{cpu, dma, ppu, timer};
 use std::cell::RefCell;
 
 thread_local! {
@@ -30,27 +27,41 @@ pub fn init_emulator() {
     });
 }
 
-pub fn run_emulator() {
-    init_emulator();
-
+pub fn create_driver() -> Driver {
     let mut driver = Driver::new();
-
-    // Spawn CPU component
     driver.spawn(cpu::cpu());
-
-    // Spawn PPU component
     driver.spawn(ppu::ppu());
-
-    // Spawn Timer component
     driver.spawn(timer::timer());
-
-    // Spawn DMA component
     driver.spawn(dma::dma_component());
-
-    // TODO: Add other components (APU, etc.)
-
-    driver.run();
+    driver
 }
 
-// TODO: Add controlled execution function when we implement the main emulation loop
-// This will use driver.run_for() to execute for specific cycle counts and handle events
+pub fn run_emulator_step(driver: &mut Driver) -> ExecutionResult {
+    // Run emulator for approximately one frame's worth of cycles
+    // Game Boy runs at ~4.194304 MHz, 60 FPS = ~69905 cycles per frame
+    let cycles_per_frame = 69905;
+
+    loop {
+        let result = driver.run_for(cycles_per_frame);
+
+        match result.event {
+            Event::VBlank => {
+                // VBlank occurred - frame complete
+                return result;
+            }
+            Event::AudioBufferFull => {
+                // TODO: Handle audio when APU is implemented
+                continue;
+            }
+            Event::MaxCycles => {
+                // Ran out of cycles without VBlank - return result and continue next time
+                return result;
+            }
+        }
+    }
+}
+
+pub fn run_emulator() {
+    init_emulator();
+    crate::ui::run_ui();
+}
