@@ -2306,6 +2306,63 @@ async fn execute_cb_instruction() {
     }
 }
 
+// System control instructions
+async fn execute_nop() {
+    // NOP - 1 M-cycle total
+    // Does nothing but consume one cycle (already consumed by fetch)
+}
+
+async fn execute_halt() {
+    // HALT - Variable timing based on interrupt state
+    let (ime, pending_interrupts) = with_state(|state| {
+        let ie = state.interrupts.ie;
+        let if_reg = state.interrupts.if_reg;
+        (state.interrupts.ime, ie & if_reg)
+    });
+
+    if ime {
+        // IME = 1: Normal halt behavior
+        // Wait until an interrupt is pending, then it will be handled normally
+        loop {
+            sleep(4).await; // Wait one cycle
+            let pending = with_state(|state| state.interrupts.ie & state.interrupts.if_reg);
+            if pending != 0 {
+                break; // Exit halt when interrupt is pending
+            }
+        }
+    } else {
+        // IME = 0: Special halt behavior
+        if pending_interrupts != 0 {
+            // HALT Bug: If interrupt is already pending when HALT executes with IME=0,
+            // the halt exits immediately but PC fails to increment properly.
+            // This causes the next byte to be read twice.
+
+            // Decrement PC to simulate the halt bug (next instruction will be read twice)
+            with_state_mut(|state| {
+                state.cpu.pc = state.cpu.pc.wrapping_sub(1);
+            });
+        } else {
+            // No interrupts pending: wait until one becomes pending, but don't handle it
+            loop {
+                sleep(4).await; // Wait one cycle
+                let pending = with_state(|state| state.interrupts.ie & state.interrupts.if_reg);
+                if pending != 0 {
+                    break; // Exit halt when interrupt becomes pending
+                }
+            }
+        }
+    }
+}
+
+async fn execute_stop() {
+    // STOP - Stops the system
+    // For our emulator, we'll just halt indefinitely
+    // In a real Game Boy, this stops the main clock and puts the system in low power mode
+    loop {
+        sleep(4).await; // Sleep forever
+    }
+}
+
 async fn decode_and_execute(opcode: u8) {
     match opcode {
         // LD r, n instructions (0b00xxx110)
@@ -2398,6 +2455,10 @@ async fn decode_and_execute(opcode: u8) {
         // Interrupt control
         0xF3 => execute_di().await, // DI
         0xFB => execute_ei().await, // EI
+        // System control
+        0x00 => execute_nop().await,  // NOP
+        0x76 => execute_halt().await, // HALT
+        0x10 => execute_stop().await, // STOP
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
             // For now, just sleep to avoid infinite loop
