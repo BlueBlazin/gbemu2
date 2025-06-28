@@ -1,3 +1,4 @@
+use crate::dma::DmaState;
 use crate::interrupts::InterruptState;
 use crate::mmu::MMU;
 use crate::ppu::PpuState;
@@ -144,6 +145,7 @@ pub struct EmulatorState {
     pub ppu: PpuState,
     pub interrupts: InterruptState,
     pub timer: TimerState,
+    pub dma: DmaState,
 
     // Legacy memory array for backward compatibility (TODO: remove after updating CPU)
     pub memory: [u8; 0x10000],
@@ -157,6 +159,7 @@ impl EmulatorState {
             ppu: PpuState::new(),
             interrupts: InterruptState::new(),
             timer: TimerState::new(),
+            dma: DmaState::new(),
             memory: [0; 0x10000],
         }
     }

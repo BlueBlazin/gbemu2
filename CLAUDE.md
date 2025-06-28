@@ -73,6 +73,13 @@ async fn memory_read(address: u16) -> u8 {
 }
 ```
 
+**CRITICAL TIMING NOTE:**
+- **T-cycle = 1 clock cycle** (the fundamental timing unit)
+- **M-cycle = 4 T-cycles** (machine cycle, used for Game Boy timing specs)
+- **Always use `sleep(4)` for 1 M-cycle operations**
+- Game Boy documentation uses M-cycles, but our sleep() function takes T-cycles
+- Examples: Memory access = 1 M-cycle = `sleep(4)`, Instruction timing in M-cycles must be multiplied by 4
+
 The driver automatically handles scheduling and ensures components wake up at the correct cycle count.
 
 ## Development Notes

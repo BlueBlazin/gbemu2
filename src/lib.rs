@@ -1,5 +1,6 @@
 mod cartridge;
 mod cpu;
+mod dma;
 mod driver;
 mod emulator;
 mod interrupts;

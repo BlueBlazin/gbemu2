@@ -1,4 +1,5 @@
 use crate::cpu;
+use crate::dma;
 use crate::driver::Driver;
 use crate::ppu;
 use crate::state::EmulatorState;
@@ -42,6 +43,9 @@ pub fn run_emulator() {
 
     // Spawn Timer component
     driver.spawn(timer::timer());
+
+    // Spawn DMA component
+    driver.spawn(dma::dma_component());
 
     // TODO: Add other components (APU, etc.)
 

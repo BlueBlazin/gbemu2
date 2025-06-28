@@ -4,6 +4,7 @@ use crate::timer;
 // I/O register addresses
 pub const IF_REGISTER: u16 = 0xFF0F; // Interrupt Flag
 pub const IE_REGISTER: u16 = 0xFFFF; // Interrupt Enable
+pub const DMA_REGISTER: u16 = 0xFF46; // OAM DMA Transfer
 
 // Read from I/O register
 pub fn read_io_register(address: u16) -> u8 {
@@ -19,6 +20,11 @@ pub fn read_io_register(address: u16) -> u8 {
         // Timer registers (FF04-FF07)
         timer::DIV_REGISTER | timer::TIMA_REGISTER | timer::TMA_REGISTER | timer::TAC_REGISTER => {
             timer::read_timer_register(address)
+        }
+        // DMA register (FF46)
+        DMA_REGISTER => {
+            // Return the last written value to the DMA register
+            with_state(|state| (state.dma.source_address >> 8) as u8)
         }
         _ => {
             // Default I/O register read from MMU
@@ -41,6 +47,11 @@ pub fn write_io_register(address: u16, value: u8) {
         // Timer registers (FF04-FF07)
         timer::DIV_REGISTER | timer::TIMA_REGISTER | timer::TMA_REGISTER | timer::TAC_REGISTER => {
             timer::write_timer_register(address, value);
+        }
+        // DMA register (FF46)
+        DMA_REGISTER => {
+            // Request DMA transfer with source page address
+            with_state_mut(|state| state.dma.request_transfer(value));
         }
         _ => {
             // Default I/O register write to MMU

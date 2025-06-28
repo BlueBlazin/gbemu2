@@ -349,3 +349,30 @@ Pixel fetcher has 5 steps. The first four steps take 2 dots each and the fifth s
 ##### Object Fetch Canceling
 
 Object fetching may be canceled if LCDC.1 is disabled while the PPU is fetching an object from OAM. This canceling lengthens mode 3 by the amount of dots the previous instruction took plus the residual dots left for the PPU to process. When OAM fetching is canceled, a pixel is rendered, and the fetcher is advanced one step. This advancement lengthens mode 3 by 1 dot if the current pixel is not 160. If the current pixel is 160 the PPU stops processing objects because they won’t be visible
+
+## OAM DMA Transfer
+
+### FF46 — DMA: OAM DMA source address & start
+
+- Writing to this register starts a DMA transfer from ROM or RAM to OAM
+- The written value specifies the transfer source address divided by $100, that is, source and destination are:
+Source:      $XX00-$XX9F ;XX = $00 to $DF
+Destination: $FE00-$FE9F
+- The transfer takes 160 M-cycles: 640 dot
+
+### OAM DMA Details
+
+- Can copy one byte per machine cycle without involving the CPU at all
+- The upper 8 bits of the OAM DMA source address are stored in the DMA register, while the lower 8 bits used by both the source and target address are stored in the DMA controller and are not accessible directly
+- A transfer always begins with 0x00 in the lower bits and copies exactly 160 bytes, so the lower bits are never in the 0xA0-0xFF range
+- Writing to the DMA register updates the upper bits of the DMA source address and also triggers an OAM DMA transfer request, although the DMA transfer does not begin immediately
+
+bit 7-0 DMA: OAM DMA source address
+
+- Writing to this register requests an OAM DMA transfer, but it’s just a request and the actual DMA transfer starts with a delay
+- Reading this register returns the value that was previously written to the register. The stored value is not cleared on reset, so the initial value before the first write is unknown
+
+### OAM DMA bus conflicts
+
+- During OAM DMA, the CPU can access only HRAM (memory at $FF80-$FFFE)
+- While an OAM DMA is in progress, the PPU cannot read OAM properly either

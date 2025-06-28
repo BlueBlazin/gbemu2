@@ -38,6 +38,21 @@ impl MMU {
     }
 
     pub fn read(&self, address: u16) -> u8 {
+        // Check for DMA bus restrictions
+        let dma_active = crate::emulator::with_state(|state| state.dma.is_bus_restricted());
+        
+        if dma_active {
+            // During DMA, CPU can only access HRAM (0xFF80-0xFFFE)
+            match address {
+                0xFF80..=0xFFFE => self.hram[(address - 0xFF80) as usize],
+                _ => 0xFF, // All other addresses return 0xFF during DMA
+            }
+        } else {
+            self.read_unrestricted(address)
+        }
+    }
+
+    pub fn read_unrestricted(&self, address: u16) -> u8 {
         match address {
             // ROM and External RAM (0x0000-0x7FFF, 0xA000-0xBFFF) - handled by cartridge
             0x0000..=0x7FFF | 0xA000..=0xBFFF => {
@@ -81,6 +96,25 @@ impl MMU {
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
+        // Check for DMA bus restrictions
+        let dma_active = crate::emulator::with_state(|state| state.dma.is_bus_restricted());
+        
+        if dma_active {
+            // During DMA, CPU can only access HRAM (0xFF80-0xFFFE)
+            match address {
+                0xFF80..=0xFFFE => {
+                    self.hram[(address - 0xFF80) as usize] = value;
+                }
+                _ => {
+                    // All other writes are ignored during DMA
+                }
+            }
+        } else {
+            self.write_unrestricted(address, value);
+        }
+    }
+
+    pub fn write_unrestricted(&mut self, address: u16, value: u8) {
         match address {
             // ROM and External RAM (0x0000-0x7FFF, 0xA000-0xBFFF) - handled by cartridge
             0x0000..=0x7FFF | 0xA000..=0xBFFF => {
