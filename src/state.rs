@@ -27,16 +27,16 @@ impl Default for CpuState {
 impl CpuState {
     pub fn new() -> Self {
         Self {
-            a: 0x01,         // A = $01
-            f: 0x80,         // F = Z=1 N=0 H=0 C=0 (Z flag set, others clear)
-            b: 0x00,         // B = $00
-            c: 0x13,         // C = $13
-            d: 0x00,         // D = $00
-            e: 0xD8,         // E = $D8
-            h: 0x01,         // H = $01
-            l: 0x4D,         // L = $4D
-            sp: 0xFFFE,      // SP = $FFFE
-            pc: 0x0100,      // PC = $0100
+            a: 0x01,    // A = $01
+            f: 0x80,    // F = Z=1 N=0 H=0 C=0 (Z flag set, others clear)
+            b: 0x00,    // B = $00
+            c: 0x13,    // C = $13
+            d: 0x00,    // D = $00
+            e: 0xD8,    // E = $D8
+            h: 0x01,    // H = $01
+            l: 0x4D,    // L = $4D
+            sp: 0xFFFE, // SP = $FFFE
+            pc: 0x0100, // PC = $0100
         }
     }
 
@@ -177,9 +177,7 @@ impl EmulatorState {
         // Handle I/O registers specially to avoid nested borrows
         match address {
             // I/O Registers (0xFF00-0xFF7F) and IE register (0xFFFF)
-            0xFF00..=0xFF7F | 0xFFFF => {
-                self.read_io_register(address)
-            }
+            0xFF00..=0xFF7F | 0xFFFF => self.read_io_register(address),
             _ => {
                 let dma_active = self.dma.is_bus_restricted();
                 self.mmu.read(address, dma_active, &self.ppu)
@@ -200,27 +198,31 @@ impl EmulatorState {
             }
         }
     }
-    
+
     // Internal I/O register handling
     fn read_io_register(&self, address: u16) -> u8 {
         match address {
             crate::io::IF_REGISTER => self.interrupts.if_reg,
             crate::io::IE_REGISTER => self.interrupts.ie,
-            crate::timer::DIV_REGISTER | crate::timer::TIMA_REGISTER | 
-            crate::timer::TMA_REGISTER | crate::timer::TAC_REGISTER => {
+            crate::timer::DIV_REGISTER
+            | crate::timer::TIMA_REGISTER
+            | crate::timer::TMA_REGISTER
+            | crate::timer::TAC_REGISTER => {
                 crate::timer::read_timer_register_direct(address, &self.timer)
             }
             crate::io::DMA_REGISTER => (self.dma.source_address >> 8) as u8,
             _ => self.mmu.io_registers[(address - 0xFF00) as usize],
         }
     }
-    
+
     fn write_io_register(&mut self, address: u16, value: u8) {
         match address {
             crate::io::IF_REGISTER => self.interrupts.if_reg = value,
             crate::io::IE_REGISTER => self.interrupts.ie = value,
-            crate::timer::DIV_REGISTER | crate::timer::TIMA_REGISTER | 
-            crate::timer::TMA_REGISTER | crate::timer::TAC_REGISTER => {
+            crate::timer::DIV_REGISTER
+            | crate::timer::TIMA_REGISTER
+            | crate::timer::TMA_REGISTER
+            | crate::timer::TAC_REGISTER => {
                 crate::timer::write_timer_register_direct(address, value, &mut self.timer);
             }
             crate::io::DMA_REGISTER => self.dma.request_transfer(value),

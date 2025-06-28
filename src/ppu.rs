@@ -148,9 +148,9 @@ impl PpuState {
             obp0: 0x00, // OBP0 not specified in boot values, so default to $00
             obp1: 0x00, // OBP1 not specified in boot values, so default to $00
             oam: [OamEntry::new(); 40],
-            vram: [[0; 16]; 384], // Initialize VRAM tiles
-            bg_tile_map_0: [0; 0x400], // Initialize background tile map 0
-            bg_tile_map_1: [0; 0x400], // Initialize background tile map 1
+            vram: [[0; 16]; 384],         // Initialize VRAM tiles
+            bg_tile_map_0: [0; 0x400],    // Initialize background tile map 0
+            bg_tile_map_1: [0; 0x400],    // Initialize background tile map 1
             framebuffer: [[0; 160]; 144], // Initialize to color 0 (white)
             ppu_mode: 2,                  // Start in mode 2 (OAM scan)
             dots: 0,
@@ -546,7 +546,7 @@ async fn execute_frame() {
     for scanline in 0..VISIBLE_SCANLINES {
         with_state_mut(|state| state.ppu.ly = scanline);
         execute_visible_scanline().await;
-        
+
         // Increment window line counter if window was rendered on this scanline
         with_state_mut(|state| {
             if state.ppu.window_triggered {
@@ -558,9 +558,16 @@ async fn execute_frame() {
     // Execute VBlank scanlines (144-153)
     // Verify we have the expected number of VBlank scanlines and dots
     let vblank_lines = SCANLINES_PER_FRAME - VISIBLE_SCANLINES;
-    debug_assert_eq!(vblank_lines, VBLANK_SCANLINES, "VBlank scanline count mismatch");
-    debug_assert_eq!(vblank_lines as u16 * DOTS_PER_SCANLINE, VBLANK_DOTS, "VBlank dots calculation mismatch");
-    
+    debug_assert_eq!(
+        vblank_lines, VBLANK_SCANLINES,
+        "VBlank scanline count mismatch"
+    );
+    debug_assert_eq!(
+        vblank_lines as u16 * DOTS_PER_SCANLINE,
+        VBLANK_DOTS,
+        "VBlank dots calculation mismatch"
+    );
+
     for scanline in VISIBLE_SCANLINES..SCANLINES_PER_FRAME {
         with_state_mut(|state| state.ppu.ly = scanline);
         execute_vblank_scanline().await;
@@ -579,9 +586,7 @@ async fn execute_visible_scanline() {
     });
 
     // Check for LYC=LY interrupt at start of scanline
-    let lyc_int = with_state(|state| {
-        state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly()
-    });
+    let lyc_int = with_state(|state| state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly());
     if lyc_int {
         crate::interrupts::request_lcd_interrupt();
     }
@@ -603,9 +608,7 @@ async fn execute_vblank_scanline() {
     });
 
     // Check for LYC=LY interrupt
-    let lyc_int = with_state(|state| {
-        state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly()
-    });
+    let lyc_int = with_state(|state| state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly());
     if lyc_int {
         crate::interrupts::request_lcd_interrupt();
     }
@@ -690,7 +693,7 @@ async fn execute_hblank() {
     // Calculate remaining dots for HBlank
     let current_dots = with_state(|state| state.ppu.dots);
     let hblank_dots = DOTS_PER_SCANLINE - current_dots;
-    
+
     // Validate HBlank duration is within expected range
     if !(HBLANK_MIN_DOTS..=HBLANK_MAX_DOTS).contains(&hblank_dots) {
         // This would indicate a timing bug in the PPU implementation
@@ -861,7 +864,7 @@ fn apply_obj_palette(color: u8, palette: u8) -> u8 {
 async fn render_scanline() {
     // Choose rendering method based on implementation complexity
     let use_fifo_renderer = true; // Could be made configurable for debugging
-    
+
     if use_fifo_renderer {
         render_scanline_fifo().await;
     } else {
@@ -910,7 +913,7 @@ async fn render_scanline_fifo() {
 // Alternative simple renderer for debugging/fallback
 async fn render_scanline_simple() {
     let ly = with_state(|state| state.ppu.ly);
-    
+
     if with_state(|state| state.ppu.lcd_enable()) {
         for x in 0..160 {
             let final_color = if with_state(|state| state.ppu.bg_window_enable()) {
@@ -918,13 +921,13 @@ async fn render_scanline_simple() {
             } else {
                 0 // Background disabled - white
             };
-            
+
             with_state_mut(|state| {
                 state.ppu.set_pixel(x as usize, ly as usize, final_color);
             });
         }
     }
-    
+
     // Simple renderer doesn't add its own timing - let execute_drawing handle it
 }
 
@@ -933,19 +936,19 @@ async fn apply_scx_penalty() {
     if scx_penalty > 0 {
         // Pause rendering for SCX % 8 dots and discard that many pixels
         sleep(scx_penalty as usize).await;
-        
+
         // Fill background FIFO with enough pixels to discard
         while with_state(|state| state.ppu.bg_fifo.len() < scx_penalty as usize) {
             step_fetcher().await;
         }
-        
+
         // Discard the required number of pixels
         for _ in 0..scx_penalty {
             with_state_mut(|state| {
                 state.ppu.bg_fifo.pop();
             });
         }
-        
+
         with_state_mut(|state| state.ppu.scx_penalty_applied = true);
     }
 }
@@ -1016,14 +1019,14 @@ async fn execute_get_tile() {
 
     // Calculate tile address in tile map
     let tile_map_addr = tile_map_base + ((tile_y / 8) * 32) + (tile_x & 0x1F);
-    
+
     // Read tile index from VRAM (or 0xFF if blocked)
     let tile_index = if can_access_vram() {
         ppu_vram_read(tile_map_addr).await
     } else {
         0xFF
     };
-    
+
     // Store tile index in fetcher
     with_state_mut(|state| {
         state.ppu.fetcher.tile_index = tile_index;
@@ -1279,7 +1282,7 @@ async fn mix_object_pixels_into_fifo(
                 // (existing pixel is transparent OR existing pixel has higher priority)
                 if color != 0 && (existing_pixel.color == 0 || !existing_pixel.bg_priority) {
                     *existing_pixel = obj_pixel;
-                    
+
                     // Track which OAM entry contributed to this pixel (for debugging)
                     #[cfg(debug_assertions)]
                     {

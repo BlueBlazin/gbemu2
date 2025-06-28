@@ -24,12 +24,20 @@ fn main() {
     let rom_data = match fs::read(&args.rom_file) {
         Ok(data) => data,
         Err(e) => {
-            eprintln!("Error reading ROM file '{}': {}", args.rom_file.display(), e);
+            eprintln!(
+                "Error reading ROM file '{}': {}",
+                args.rom_file.display(),
+                e
+            );
             std::process::exit(1);
         }
     };
 
-    println!("Loaded ROM: {} ({} bytes)", args.rom_file.display(), rom_data.len());
+    println!(
+        "Loaded ROM: {} ({} bytes)",
+        args.rom_file.display(),
+        rom_data.len()
+    );
 
     // Parse cartridge info
     let cartridge_info = match gbemu2::cartridge::CartridgeInfo::from_rom(&rom_data) {

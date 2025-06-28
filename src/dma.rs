@@ -19,7 +19,7 @@ impl Default for DmaState {
 impl DmaState {
     pub fn new() -> Self {
         Self {
-            source_address: 0xFF00,  // DMA = $FF (boot value)
+            source_address: 0xFF00, // DMA = $FF (boot value)
             bytes_transferred: 0,
             active: false,
             delay_cycles: 0,
@@ -125,7 +125,7 @@ async fn await_dma_transfer() {
                     1 => state.ppu.oam[oam_index].x = byte_value,
                     2 => state.ppu.oam[oam_index].tile_index = byte_value,
                     3 => state.ppu.oam[oam_index].attributes = byte_value,
-                    _ => {},
+                    _ => {}
                 }
             }
             state.dma.bytes_transferred = byte_index + 1;

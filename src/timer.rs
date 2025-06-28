@@ -41,10 +41,10 @@ impl Default for TimerState {
 impl TimerState {
     pub fn new() -> Self {
         Self {
-            div: 0xAB,       // DIV = $AB (boot value)
-            tima: 0x00,      // TIMA = $00 (boot value)
-            tma: 0x00,       // TMA = $00 (boot value)
-            tac: 0xF8,       // TAC = $F8 (boot value)
+            div: 0xAB,              // DIV = $AB (boot value)
+            tima: 0x00,             // TIMA = $00 (boot value)
+            tma: 0x00,              // TMA = $00 (boot value)
+            tac: 0xF8,              // TAC = $F8 (boot value)
             system_counter: 0xAB00, // DIV is upper 8 bits, so 0xAB << 8
             timer_cycles: 0,
             overflow_pending: false,
@@ -183,28 +183,34 @@ async fn step_timer() {
     if stop_mode {
         return; // Don't update counters in STOP mode
     }
-    
+
     // Debug: Validate timer state occasionally in debug builds
     #[cfg(debug_assertions)]
     {
         let counter = with_state(|state| state.timer.system_counter);
-        if counter % 1000 == 0 { // Check every 1000 cycles
+        if counter % 1000 == 0 {
+            // Check every 1000 cycles
             let timer_state = get_timer_state(); // Use get_timer_state for inspection
             let full_state = get_full_timer_state(); // Use full state for comprehensive debugging
-            
+
             // Validate that DIV register matches system counter upper bits
-            debug_assert_eq!(timer_state.0, (full_state.4 >> 8) as u8, "DIV register mismatch");
-            
+            debug_assert_eq!(
+                timer_state.0,
+                (full_state.4 >> 8) as u8,
+                "DIV register mismatch"
+            );
+
             // Test STOP mode functionality in debug builds (simulate external wake-up condition)
-            if full_state.6 { // stop_mode is true
+            if full_state.6 {
+                // stop_mode is true
                 // In a real emulator, this would be triggered by joypad input or other external events
-                // For demonstration purposes, we don't actually call exit_stop_mode here 
+                // For demonstration purposes, we don't actually call exit_stop_mode here
                 // as it would interfere with the STOP instruction behavior
-                // In a real scenario, we might call wake_from_stop_if_needed() 
+                // In a real scenario, we might call wake_from_stop_if_needed()
                 // from joypad or other input systems
                 let _ = (exit_stop_mode, wake_from_stop_if_needed); // Reference functions
             }
-            
+
             // Timer state is now being actively used for validation
             let _ = (timer_state, full_state); // Prevent unused variable warnings
         }
@@ -225,10 +231,10 @@ async fn step_timer() {
         // Update DIV register (upper 8 bits of system counter)
         // DIV increments at 16384 Hz (every 64 M-cycles = DIV_FREQ)
         state.timer.div = (state.timer.system_counter >> 8) as u8;
-        
+
         // Validate DIV frequency matches expected constant
         debug_assert_eq!(
-            256, // DIV increments every 256 M-cycles (upper 8 bits of 16-bit counter)
+            256,          // DIV increments every 256 M-cycles (upper 8 bits of 16-bit counter)
             DIV_FREQ * 4, // DIV_FREQ is in M-cycles, multiply by 4 for comparison
             "DIV frequency calculation mismatch"
         );
@@ -290,7 +296,7 @@ pub fn read_timer_register_direct(address: u16, timer: &TimerState) -> u8 {
         }
         TMA_REGISTER => timer.tma,
         TAC_REGISTER => timer.tac | 0xF8, // Upper bits read as 1
-        _ => 0xFF,                         // Invalid register
+        _ => 0xFF,                        // Invalid register
     }
 }
 
@@ -319,7 +325,7 @@ pub fn exit_stop_mode() {
     with_state_mut(|state| {
         state.timer.exit_stop_mode();
     });
-    
+
     // In a real Game Boy, STOP mode is typically exited by:
     // - Joypad input
     // - Serial communication interrupt
@@ -360,7 +366,7 @@ pub fn wake_from_stop_if_needed() {
     // - Joypad input system
     // - Serial communication interrupt
     // - Other external wake-up sources
-    
+
     let is_stopped = with_state(|state| state.timer.stop_mode);
     if is_stopped {
         exit_stop_mode();
@@ -370,19 +376,19 @@ pub fn wake_from_stop_if_needed() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_stop_mode_functionality() {
         // This test demonstrates the STOP mode entry and exit functionality
         // ensuring exit_stop_mode is properly connected
-        
+
         let mut timer_state = TimerState::new();
-        
+
         // Enter STOP mode
         timer_state.enter_stop_mode();
         assert!(timer_state.stop_mode);
-        
-        // Exit STOP mode  
+
+        // Exit STOP mode
         timer_state.exit_stop_mode();
         assert!(!timer_state.stop_mode);
     }

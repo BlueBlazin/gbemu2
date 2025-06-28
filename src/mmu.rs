@@ -29,12 +29,12 @@ impl Default for MMU {
 impl MMU {
     pub fn new() -> Self {
         let mut io_registers = [0; 0x80];
-        
+
         // Set boot values for I/O registers
         io_registers[0x00] = 0xCF; // P1 (FF00) = $CF
         io_registers[0x01] = 0x00; // SB (FF01) = $00
         io_registers[0x02] = 0x7E; // SC (FF02) = $7E
-        
+
         Self {
             cartridge: None,
             wram: [0; 0x2000],
@@ -99,7 +99,8 @@ impl MMU {
             0xFE00..=0xFE9F => {
                 // Check if OAM is accessible based on PPU mode
                 let mode = ppu.ppu_mode;
-                if mode == 0 || mode == 1 { // MODE_HBLANK or MODE_VBLANK
+                if mode == 0 || mode == 1 {
+                    // MODE_HBLANK or MODE_VBLANK
                     let oam_index = ((address - 0xFE00) / 4) as usize;
                     let byte_offset = (address - 0xFE00) % 4;
                     if oam_index < 40 {
@@ -196,7 +197,8 @@ impl MMU {
             0xFE00..=0xFE9F => {
                 // Only allow OAM writes when PPU allows access
                 let mode = ppu.ppu_mode;
-                if mode == 0 || mode == 1 { // MODE_HBLANK or MODE_VBLANK
+                if mode == 0 || mode == 1 {
+                    // MODE_HBLANK or MODE_VBLANK
                     let oam_index = ((address - 0xFE00) / 4) as usize;
                     let byte_offset = (address - 0xFE00) % 4;
                     if oam_index < 40 {
@@ -205,7 +207,7 @@ impl MMU {
                             1 => ppu.oam[oam_index].x = value,
                             2 => ppu.oam[oam_index].tile_index = value,
                             3 => ppu.oam[oam_index].attributes = value,
-                            _ => {},
+                            _ => {}
                         }
                     }
                 }

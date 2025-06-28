@@ -63,7 +63,7 @@ pub fn run_emulator_step(driver: &mut Driver) -> ExecutionResult {
 
 pub fn run_emulator(rom_data: Option<Vec<u8>>) {
     init_emulator();
-    
+
     // Load cartridge if ROM data is provided
     if let Some(rom_bytes) = rom_data {
         match load_cartridge(rom_bytes) {
@@ -76,12 +76,10 @@ pub fn run_emulator(rom_data: Option<Vec<u8>>) {
     } else {
         println!("No ROM loaded - running without cartridge");
     }
-    
+
     crate::ui::run_ui();
 }
 
 pub fn load_cartridge(rom_data: Vec<u8>) -> Result<(), String> {
-    STATE.with(|state| {
-        state.borrow_mut().load_cartridge(rom_data)
-    })
+    STATE.with(|state| state.borrow_mut().load_cartridge(rom_data))
 }
