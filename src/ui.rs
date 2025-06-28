@@ -9,7 +9,7 @@ use winit::window::WindowBuilder;
 
 const SCREEN_WIDTH: u32 = 160;
 const SCREEN_HEIGHT: u32 = 144;
-const SCALE_FACTOR: u32 = 4;
+const SCALE_FACTOR: u32 = 3;
 
 pub fn run_ui() {
     let mut driver = create_driver();
