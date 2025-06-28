@@ -51,3 +51,6 @@ pub fn run_emulator() {
 
     driver.run();
 }
+
+// TODO: Add controlled execution function when we implement the main emulation loop
+// This will use driver.run_for() to execute for specific cycle counts and handle events

@@ -518,8 +518,9 @@ async fn execute_frame() {
         execute_vblank_scanline().await;
     }
 
-    // Mark frame as complete
+    // Mark frame as complete and emit VBlank event
     with_state_mut(|state| state.ppu.frame_complete = true);
+    crate::driver::emit_event(crate::driver::Event::VBlank);
 }
 
 async fn execute_visible_scanline() {
