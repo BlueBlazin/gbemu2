@@ -152,9 +152,6 @@ pub struct EmulatorState {
     pub interrupts: InterruptState,
     pub timer: TimerState,
     pub dma: DmaState,
-
-    // Legacy memory array for backward compatibility (TODO: remove after updating CPU)
-    pub memory: [u8; 0x10000],
 }
 
 impl Default for EmulatorState {
@@ -172,7 +169,6 @@ impl EmulatorState {
             interrupts: InterruptState::new(),
             timer: TimerState::new(),
             dma: DmaState::new(),
-            memory: [0; 0x10000],
         }
     }
 
@@ -183,8 +179,6 @@ impl EmulatorState {
 
     pub fn write_memory(&mut self, address: u16, value: u8) {
         self.mmu.write(address, value);
-        // Also update legacy array for now (TODO: remove after CPU migration)
-        self.memory[address as usize] = value;
     }
 
     // Cartridge management

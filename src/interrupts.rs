@@ -172,7 +172,7 @@ async fn push_pc_to_stack(pc: u16) {
 async fn memory_write(address: u16, value: u8) {
     sleep(4).await; // Memory write takes 4 cycles
     with_state_mut(|state| {
-        state.memory[address as usize] = value;
+        state.write_memory(address, value);
     });
 }
 

@@ -4,19 +4,18 @@ use crate::interrupts;
 
 async fn memory_read(address: u16) -> u8 {
     sleep(4).await; // Memory read takes 4 cycles
-    with_state(|state| state.memory[address as usize])
+    with_state(|state| state.read_memory(address))
 }
 
 async fn memory_write(address: u16, value: u8) {
     sleep(4).await; // Memory write takes 4 cycles
     with_state_mut(|state| {
-        state.memory[address as usize] = value;
+        state.write_memory(address, value);
     });
 }
 
 async fn fetch() -> u8 {
     let pc = with_state(|state| state.cpu.pc);
-
     let instruction = memory_read(pc).await;
 
     // Increment PC after fetch
@@ -2365,7 +2364,7 @@ async fn execute_stop() {
         // TODO: In a real implementation, this would wake up on certain conditions
         // like joypad input or serial communication. For now we'll exit after some time
         // to demonstrate the exit_stop_mode functionality
-        
+
         // In a real Game Boy, STOP mode is exited by joypad input
         // For emulation purposes, we could add a check here and call:
         // crate::timer::exit_stop_mode();
@@ -2487,6 +2486,7 @@ pub async fn cpu() {
 
         // Fetch and execute instruction
         let instruction = fetch().await;
+
         decode_and_execute(instruction).await;
 
         // Process EI delay after instruction execution

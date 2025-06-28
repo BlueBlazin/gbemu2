@@ -10,13 +10,13 @@ pub struct MMU {
     pub wram: [u8; 0x2000], // 8 KiB Work RAM
 
     // I/O Registers (0xFF00-0xFF7F)
-    pub io_registers: [u8; 0x80], // 128 bytes I/O (TODO: implement proper I/O handling)
+    pub io_registers: [u8; 0x80], // 128 bytes I/O (handled by io module)
 
     // High RAM (0xFF80-0xFFFE)
     pub hram: [u8; 0x7F], // 127 bytes High RAM
 
     // Interrupt Enable Register (0xFFFF)
-    pub ie_register: u8, // Interrupt Enable (TODO: implement interrupts)
+    pub ie_register: u8, // Interrupt Enable (handled by io module)
 }
 
 impl Default for MMU {
