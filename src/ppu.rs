@@ -546,6 +546,13 @@ async fn execute_frame() {
     for scanline in 0..VISIBLE_SCANLINES {
         with_state_mut(|state| state.ppu.ly = scanline);
         execute_visible_scanline().await;
+        
+        // Increment window line counter if window was rendered on this scanline
+        with_state_mut(|state| {
+            if state.ppu.window_triggered {
+                state.ppu.window_line += 1;
+            }
+        });
     }
 
     // Execute VBlank scanlines (144-153)
@@ -566,7 +573,18 @@ async fn execute_frame() {
 
 async fn execute_visible_scanline() {
     // Reset scanline state
-    with_state_mut(|state| state.ppu.dots = 0);
+    with_state_mut(|state| {
+        state.ppu.dots = 0;
+        state.ppu.update_lyc_ly_flag();
+    });
+
+    // Check for LYC=LY interrupt at start of scanline
+    let lyc_int = with_state(|state| {
+        state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly()
+    });
+    if lyc_int {
+        crate::interrupts::request_lcd_interrupt();
+    }
 
     // Mode 2: OAM Scan (80 dots)
     execute_oam_scan().await;
@@ -579,14 +597,36 @@ async fn execute_visible_scanline() {
 }
 
 async fn execute_vblank_scanline() {
-    // Set mode to VBlank
+    // Update LYC=LY flag at start of scanline
     with_state_mut(|state| {
-        state.ppu.set_mode(MODE_VBLANK);
         state.ppu.update_lyc_ly_flag();
     });
 
-    // Trigger VBlank interrupt
-    crate::interrupts::request_vblank_interrupt();
+    // Check for LYC=LY interrupt
+    let lyc_int = with_state(|state| {
+        state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly()
+    });
+    if lyc_int {
+        crate::interrupts::request_lcd_interrupt();
+    }
+
+    // Only set VBlank mode and trigger interrupt on line 144
+    let ly = with_state(|state| state.ppu.ly);
+    if ly == 144 {
+        // Set mode to VBlank
+        with_state_mut(|state| {
+            state.ppu.set_mode(MODE_VBLANK);
+        });
+
+        // Trigger VBlank interrupt only once when entering VBlank
+        crate::interrupts::request_vblank_interrupt();
+
+        // Trigger Mode 1 interrupt if enabled
+        let mode_1_int = with_state(|state| state.ppu.mode_1_int_select());
+        if mode_1_int {
+            crate::interrupts::request_lcd_interrupt();
+        }
+    }
 
     // Wait for full scanline duration
     sleep(DOTS_PER_SCANLINE as usize).await;
@@ -596,7 +636,6 @@ async fn execute_oam_scan() {
     // Set mode to OAM scan
     with_state_mut(|state| {
         state.ppu.set_mode(MODE_OAM_SCAN);
-        state.ppu.update_lyc_ly_flag();
     });
 
     // Trigger LCD interrupt if enabled for Mode 2
@@ -613,8 +652,11 @@ async fn execute_oam_scan() {
         state.ppu.selected_objects = selected_objects;
     });
 
-    // Wait for OAM scan duration
+    // Wait for OAM scan duration and update dot counter
     sleep(OAM_SCAN_DOTS as usize).await;
+    with_state_mut(|state| {
+        state.ppu.dots += OAM_SCAN_DOTS;
+    });
 }
 
 async fn execute_drawing() {
@@ -626,11 +668,13 @@ async fn execute_drawing() {
     // Calculate drawing duration based on penalties
     let drawing_dots = calculate_drawing_duration().await;
 
-    // TODO: Initialize pixel FIFO and render scanline
+    // Render scanline (this will handle its own timing for FIFO operations)
     render_scanline().await;
 
-    // Wait for drawing duration
-    sleep(drawing_dots as usize).await;
+    // Update dot counter with the calculated drawing duration
+    with_state_mut(|state| {
+        state.ppu.dots += drawing_dots;
+    });
 }
 
 async fn execute_hblank() {
@@ -831,6 +875,7 @@ async fn render_scanline_fifo() {
         state.ppu.bg_fifo.clear();
         state.ppu.obj_fifo.clear();
         state.ppu.fetcher.reset();
+        state.ppu.fetcher.x = (state.ppu.scx / 8) & 0x1F; // Start fetcher at correct tile based on SCX
         state.ppu.pixel_x = 0;
         state.ppu.window_triggered = false;
         state.ppu.scx_penalty_applied = false;
@@ -880,8 +925,7 @@ async fn render_scanline_simple() {
         }
     }
     
-    // Simple timing for non-FIFO renderer
-    sleep(172).await;
+    // Simple renderer doesn't add its own timing - let execute_drawing handle it
 }
 
 async fn apply_scx_penalty() {
@@ -942,7 +986,7 @@ async fn step_fetcher() {
 }
 
 async fn execute_get_tile() {
-    let (fetcher_x, is_window, ly, scx, scy, window_line) = with_state(|state| {
+    let (fetcher_x, is_window, ly, _scx, scy, window_line) = with_state(|state| {
         (
             state.ppu.fetcher.x,
             state.ppu.fetcher.is_window,
@@ -955,13 +999,12 @@ async fn execute_get_tile() {
 
     // Calculate tile coordinates
     let (tile_x, tile_y) = if is_window {
-        // Window coordinates
+        // Window coordinates - use window line counter
         (fetcher_x as u16, window_line as u16)
     } else {
         // Background coordinates with scrolling
-        let bg_x = ((scx / 8) + fetcher_x) & 0x1F;
-        let bg_y = (ly.wrapping_add(scy)) as u16;
-        (bg_x as u16, bg_y)
+        let bg_y = ly.wrapping_add(scy);
+        (fetcher_x as u16, bg_y as u16)
     };
 
     // Get tile map base address
@@ -975,46 +1018,16 @@ async fn execute_get_tile() {
     let tile_map_addr = tile_map_base + ((tile_y / 8) * 32) + (tile_x & 0x1F);
     
     // Read tile index from VRAM (or 0xFF if blocked)
-    let tile_index = ppu_vram_read(tile_map_addr).await;
+    let tile_index = if can_access_vram() {
+        ppu_vram_read(tile_map_addr).await
+    } else {
+        0xFF
+    };
     
     // Store tile index in fetcher
     with_state_mut(|state| {
         state.ppu.fetcher.tile_index = tile_index;
         state.ppu.fetcher.y = (tile_y % 8) as u8; // Current line within tile
-    });
-
-    let (tile_x, tile_y) = if is_window {
-        // Window coordinates
-        let window_x = with_state(|state| state.ppu.fetcher.x);
-        (window_x, window_line)
-    } else {
-        // Background coordinates
-        let bg_x = ((scx / 8) + with_state(|state| state.ppu.fetcher.x)) & 0x1F;
-        let bg_y = ly.wrapping_add(scy);
-        (bg_x, bg_y)
-    };
-
-    // Determine which tile map to use
-    let tile_map_base = if is_window {
-        with_state(|state| state.ppu.get_window_tile_map_base())
-    } else {
-        with_state(|state| state.ppu.get_bg_tile_map_base())
-    };
-
-    // Calculate tile address
-    let tile_addr = tile_map_base + ((tile_y as u16 / 8) * 32) + (tile_x as u16);
-
-    // Read tile index
-    let tile_index = if can_access_vram() {
-        ppu_vram_read(tile_addr).await
-    } else {
-        0xFF
-    };
-
-    with_state_mut(|state| {
-        state.ppu.fetcher.tile_index = tile_index;
-        state.ppu.fetcher.x = tile_x;
-        state.ppu.fetcher.y = tile_y;
     });
 }
 
@@ -1100,6 +1113,7 @@ async fn check_window_trigger() {
         with_state_mut(|state| {
             state.ppu.bg_fifo.clear();
             state.ppu.fetcher.reset();
+            state.ppu.fetcher.x = 0; // Window fetcher starts at tile 0
             state.ppu.fetcher.is_window = true;
             state.ppu.window_triggered = true;
         });

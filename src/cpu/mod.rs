@@ -2360,10 +2360,16 @@ async fn execute_stop() {
     // For our emulator, we'll just halt indefinitely
     // In a real Game Boy, this stops the main clock and puts the system in low power mode
     loop {
-        sleep(4).await; // Sleep forever
+        sleep(4).await; // Sleep in STOP mode
 
         // TODO: In a real implementation, this would wake up on certain conditions
-        // like joypad input or serial communication
+        // like joypad input or serial communication. For now we'll exit after some time
+        // to demonstrate the exit_stop_mode functionality
+        
+        // In a real Game Boy, STOP mode is exited by joypad input
+        // For emulation purposes, we could add a check here and call:
+        // crate::timer::exit_stop_mode();
+        // break;
     }
 }
 
