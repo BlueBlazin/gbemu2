@@ -5,14 +5,8 @@ pub struct MMU {
     // Cartridge (handles ROM and external RAM)
     pub cartridge: Option<Cartridge>,
 
-    // Video RAM (0x8000-0x9FFF)
-    pub vram: [u8; 0x2000], // 8 KiB Video RAM (TODO: connect to PPU)
-
     // Work RAM (0xC000-0xDFFF)
     pub wram: [u8; 0x2000], // 8 KiB Work RAM
-
-    // Object Attribute Memory (0xFE00-0xFE9F)
-    pub oam: [u8; 0xA0], // 160 bytes OAM (TODO: connect to PPU)
 
     // I/O Registers (0xFF00-0xFF7F)
     pub io_registers: [u8; 0x80], // 128 bytes I/O (TODO: implement proper I/O handling)
@@ -28,9 +22,7 @@ impl MMU {
     pub fn new() -> Self {
         Self {
             cartridge: None,
-            vram: [0; 0x2000],
             wram: [0; 0x2000],
-            oam: [0; 0xA0],
             io_registers: [0; 0x80],
             hram: [0; 0x7F],
             ie_register: 0,
@@ -63,8 +55,26 @@ impl MMU {
                 }
             }
 
-            // Video RAM (0x8000-0x9FFF) - TODO: connect to PPU
-            0x8000..=0x9FFF => self.vram[(address & 0x1FFF) as usize],
+            // Video RAM (0x8000-0x9FFF) - delegated to PPU
+            0x8000..=0x9FFF => {
+                crate::emulator::with_state(|state| {
+                    let vram_addr = (address & 0x1FFF) as usize;
+                    if vram_addr < 0x1800 {
+                        // Tile data area (0x8000-0x97FF)
+                        let tile_index = vram_addr / 16;
+                        let byte_in_tile = vram_addr % 16;
+                        state.ppu.vram[tile_index][byte_in_tile]
+                    } else {
+                        // Tile map areas (0x9800-0x9FFF)
+                        let map_addr = vram_addr - 0x1800;
+                        if map_addr < 0x400 {
+                            state.ppu.bg_tile_map_0[map_addr]
+                        } else {
+                            state.ppu.bg_tile_map_1[map_addr - 0x400]
+                        }
+                    }
+                })
+            }
 
             // Work RAM (0xC000-0xDFFF)
             0xC000..=0xDFFF => self.wram[(address & 0x1FFF) as usize],
@@ -75,8 +85,24 @@ impl MMU {
                 self.wram[(mirrored_addr & 0x1FFF) as usize]
             }
 
-            // Object Attribute Memory (0xFE00-0xFE9F) - TODO: connect to PPU
-            0xFE00..=0xFE9F => self.oam[(address - 0xFE00) as usize],
+            // Object Attribute Memory (0xFE00-0xFE9F) - delegated to PPU
+            0xFE00..=0xFE9F => {
+                crate::emulator::with_state(|state| {
+                    let oam_index = ((address - 0xFE00) / 4) as usize;
+                    let byte_offset = (address - 0xFE00) % 4;
+                    if oam_index < 40 {
+                        match byte_offset {
+                            0 => state.ppu.oam[oam_index].y,
+                            1 => state.ppu.oam[oam_index].x,
+                            2 => state.ppu.oam[oam_index].tile_index,
+                            3 => state.ppu.oam[oam_index].attributes,
+                            _ => 0xFF,
+                        }
+                    } else {
+                        0xFF
+                    }
+                })
+            }
 
             // Not Usable (0xFEA0-0xFEFF) - return 0xFF
             0xFEA0..=0xFEFF => 0xFF,
@@ -124,10 +150,25 @@ impl MMU {
                 // If no cartridge loaded, ignore writes
             }
 
-            // Video RAM (0x8000-0x9FFF) - TODO: connect to PPU
+            // Video RAM (0x8000-0x9FFF) - delegated to PPU
             0x8000..=0x9FFF => {
-                self.vram[(address & 0x1FFF) as usize] = value;
-                // TODO: notify PPU of VRAM changes
+                crate::emulator::with_state_mut(|state| {
+                    let vram_addr = (address & 0x1FFF) as usize;
+                    if vram_addr < 0x1800 {
+                        // Tile data area (0x8000-0x97FF)
+                        let tile_index = vram_addr / 16;
+                        let byte_in_tile = vram_addr % 16;
+                        state.ppu.vram[tile_index][byte_in_tile] = value;
+                    } else {
+                        // Tile map areas (0x9800-0x9FFF)
+                        let map_addr = vram_addr - 0x1800;
+                        if map_addr < 0x400 {
+                            state.ppu.bg_tile_map_0[map_addr] = value;
+                        } else {
+                            state.ppu.bg_tile_map_1[map_addr - 0x400] = value;
+                        }
+                    }
+                });
             }
 
             // Work RAM (0xC000-0xDFFF)
@@ -141,10 +182,21 @@ impl MMU {
                 self.wram[(mirrored_addr & 0x1FFF) as usize] = value;
             }
 
-            // Object Attribute Memory (0xFE00-0xFE9F) - TODO: connect to PPU
+            // Object Attribute Memory (0xFE00-0xFE9F) - delegated to PPU
             0xFE00..=0xFE9F => {
-                self.oam[(address - 0xFE00) as usize] = value;
-                // TODO: notify PPU of OAM changes
+                crate::emulator::with_state_mut(|state| {
+                    let oam_index = ((address - 0xFE00) / 4) as usize;
+                    let byte_offset = (address - 0xFE00) % 4;
+                    if oam_index < 40 {
+                        match byte_offset {
+                            0 => state.ppu.oam[oam_index].y = value,
+                            1 => state.ppu.oam[oam_index].x = value,
+                            2 => state.ppu.oam[oam_index].tile_index = value,
+                            3 => state.ppu.oam[oam_index].attributes = value,
+                            _ => {},
+                        }
+                    }
+                });
             }
 
             // Not Usable (0xFEA0-0xFEFF) - ignore writes

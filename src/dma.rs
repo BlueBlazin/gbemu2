@@ -1,5 +1,5 @@
 use crate::driver::sleep;
-use crate::emulator::{with_state, with_state_mut};
+use crate::emulator::with_state_mut;
 
 #[derive(Debug, Clone)]
 pub struct DmaState {
@@ -83,8 +83,24 @@ async fn await_dma_transfer() {
                             0xFF
                         }
                     }
-                    // Video RAM
-                    0x8000..=0x9FFF => state.mmu.vram[(source_addr & 0x1FFF) as usize],
+                    // Video RAM - read from PPU state
+                    0x8000..=0x9FFF => {
+                        let vram_addr = (source_addr & 0x1FFF) as usize;
+                        if vram_addr < 0x1800 {
+                            // Tile data area
+                            let tile_index = vram_addr / 16;
+                            let byte_in_tile = vram_addr % 16;
+                            state.ppu.vram[tile_index][byte_in_tile]
+                        } else {
+                            // Tile map areas
+                            let map_addr = vram_addr - 0x1800;
+                            if map_addr < 0x400 {
+                                state.ppu.bg_tile_map_0[map_addr]
+                            } else {
+                                state.ppu.bg_tile_map_1[map_addr - 0x400]
+                            }
+                        }
+                    }
                     // Work RAM
                     0xC000..=0xDFFF => state.mmu.wram[(source_addr & 0x1FFF) as usize],
                     _ => 0xFF,
@@ -94,8 +110,18 @@ async fn await_dma_transfer() {
                 0xFF
             };
 
-            // Write to OAM
-            state.mmu.oam[(dest_addr - 0xFE00) as usize] = byte_value;
+            // Write to OAM - write to PPU state
+            let oam_index = ((dest_addr - 0xFE00) / 4) as usize;
+            let byte_offset = (dest_addr - 0xFE00) % 4;
+            if oam_index < 40 {
+                match byte_offset {
+                    0 => state.ppu.oam[oam_index].y = byte_value,
+                    1 => state.ppu.oam[oam_index].x = byte_value,
+                    2 => state.ppu.oam[oam_index].tile_index = byte_value,
+                    3 => state.ppu.oam[oam_index].attributes = byte_value,
+                    _ => {},
+                }
+            }
             state.dma.bytes_transferred = byte_index + 1;
         });
     }

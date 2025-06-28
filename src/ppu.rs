@@ -97,6 +97,11 @@ pub struct PpuState {
     // OAM - 40 objects, 4 bytes each
     pub oam: [OamEntry; 40],
 
+    // VRAM - Video RAM (0x8000-0x97FF: tiles, 0x9800-0x9FFF: tile maps)
+    pub vram: [[u8; 16]; 384], // 384 tiles, 16 bytes each (8x8 pixels, 2 bits per pixel)
+    pub bg_tile_map_0: [u8; 0x400], // Background tile map 0 (0x9800-0x9BFF)
+    pub bg_tile_map_1: [u8; 0x400], // Background tile map 1 (0x9C00-0x9FFF)
+
     // LCD framebuffer - 160x144 pixels, 4 colors (0-3)
     pub framebuffer: [[u8; 160]; 144],
 
@@ -131,6 +136,9 @@ impl PpuState {
             obp0: 0xFF, // Default object palette 0
             obp1: 0xFF, // Default object palette 1
             oam: [OamEntry::new(); 40],
+            vram: [[0; 16]; 384], // Initialize VRAM tiles
+            bg_tile_map_0: [0; 0x400], // Initialize background tile map 0
+            bg_tile_map_1: [0; 0x400], // Initialize background tile map 1
             framebuffer: [[0; 160]; 144], // Initialize to color 0 (white)
             ppu_mode: 2,                  // Start in mode 2 (OAM scan)
             dots: 0,
@@ -1140,15 +1148,45 @@ async fn render_pixel() {
     });
 }
 
-// Memory access functions for PPU (similar to CPU pattern)
+// Memory access functions for PPU - direct access to PPU state
 async fn ppu_vram_read(address: u16) -> u8 {
     sleep(4).await; // VRAM access takes 4 cycles
-    with_state(|state| state.mmu.read(address))
+    with_state(|state| {
+        let vram_addr = (address & 0x1FFF) as usize;
+        if vram_addr < 0x1800 {
+            // Tile data area (0x8000-0x97FF)
+            let tile_index = vram_addr / 16;
+            let byte_in_tile = vram_addr % 16;
+            state.ppu.vram[tile_index][byte_in_tile]
+        } else {
+            // Tile map areas (0x9800-0x9FFF)
+            let map_addr = vram_addr - 0x1800;
+            if map_addr < 0x400 {
+                state.ppu.bg_tile_map_0[map_addr]
+            } else {
+                state.ppu.bg_tile_map_1[map_addr - 0x400]
+            }
+        }
+    })
 }
 
 async fn ppu_oam_read(address: u16) -> u8 {
     sleep(4).await; // OAM access takes 4 cycles  
-    with_state(|state| state.mmu.read(address))
+    with_state(|state| {
+        let oam_index = ((address - 0xFE00) / 4) as usize;
+        let byte_offset = (address - 0xFE00) % 4;
+        if oam_index < 40 {
+            match byte_offset {
+                0 => state.ppu.oam[oam_index].y,
+                1 => state.ppu.oam[oam_index].x,
+                2 => state.ppu.oam[oam_index].tile_index,
+                3 => state.ppu.oam[oam_index].attributes,
+                _ => 0xFF,
+            }
+        } else {
+            0xFF
+        }
+    })
 }
 
 // Helper function to check if PPU can access memory
