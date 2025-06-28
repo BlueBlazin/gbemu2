@@ -254,6 +254,42 @@ async fn execute_ld_hl_inc_a() {
     });
 }
 
+// LD r, r' - Load register to register
+async fn execute_ld_r_r(opcode: u8) {
+    // LD r, r' - 1 M-cycle
+    // Opcode format: 01xxxyyy where xxx = destination, yyy = source
+    let dest_bits = (opcode >> 3) & 0b111;
+    let src_bits = opcode & 0b111;
+    
+    // Get source value
+    let value = with_state(|state| {
+        match src_bits {
+            0b000 => state.cpu.b,
+            0b001 => state.cpu.c,
+            0b010 => state.cpu.d,
+            0b011 => state.cpu.e,
+            0b100 => state.cpu.h,
+            0b101 => state.cpu.l,
+            0b111 => state.cpu.a,
+            _ => unreachable!(), // 0b110 is (HL), handled separately
+        }
+    });
+    
+    // Set destination register
+    with_state_mut(|state| {
+        match dest_bits {
+            0b000 => state.cpu.b = value,
+            0b001 => state.cpu.c = value,
+            0b010 => state.cpu.d = value,
+            0b011 => state.cpu.e = value,
+            0b100 => state.cpu.h = value,
+            0b101 => state.cpu.l = value,
+            0b111 => state.cpu.a = value,
+            _ => unreachable!(), // 0b110 is (HL), handled separately
+        }
+    });
+}
+
 async fn execute_ld_rr_nn(opcode: u8) {
     // LD rr, nn - 3 M-cycles total
     // M2: Read LSB
@@ -2386,6 +2422,10 @@ async fn decode_and_execute(opcode: u8) {
         0x70 | 0x71 | 0x72 | 0x73 | 0x74 | 0x75 | 0x77 => {
             execute_ld_hl_r(opcode).await;
         }
+        // HALT instruction (special case)
+        0x76 => execute_halt().await,
+        // LD r, r' instructions (remaining 0x40-0x7F)
+        0x40..=0x7F => execute_ld_r_r(opcode).await,
         // 8-bit load instructions
         0x36 => execute_ld_hl_n().await,     // LD (HL), n
         0x0A => execute_ld_a_bc().await,     // LD A, (BC)
@@ -2466,7 +2506,6 @@ async fn decode_and_execute(opcode: u8) {
         0xFB => execute_ei().await, // EI
         // System control
         0x00 => execute_nop().await,  // NOP
-        0x76 => execute_halt().await, // HALT
         0x10 => execute_stop().await, // STOP
         _ => {
             println!("Unimplemented instruction: 0x{:02X}", opcode);
