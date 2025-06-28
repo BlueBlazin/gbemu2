@@ -276,6 +276,34 @@ pub fn write_timer_register(address: u16, value: u8) {
     });
 }
 
+// Direct access versions for avoiding nested borrows
+pub fn read_timer_register_direct(address: u16, timer: &TimerState) -> u8 {
+    match address {
+        DIV_REGISTER => timer.div,
+        TIMA_REGISTER => {
+            if timer.overflow_pending {
+                // During overflow cycle, TIMA reads as 0x00
+                0x00
+            } else {
+                timer.tima
+            }
+        }
+        TMA_REGISTER => timer.tma,
+        TAC_REGISTER => timer.tac | 0xF8, // Upper bits read as 1
+        _ => 0xFF,                         // Invalid register
+    }
+}
+
+pub fn write_timer_register_direct(address: u16, value: u8, timer: &mut TimerState) {
+    match address {
+        DIV_REGISTER => timer.write_div(value),
+        TIMA_REGISTER => timer.write_tima(value),
+        TMA_REGISTER => timer.write_tma(value),
+        TAC_REGISTER => timer.write_tac(value),
+        _ => {} // Invalid register, ignore
+    }
+}
+
 // Helper functions for other components
 pub fn request_timer_interrupt() {
     interrupts::request_timer_interrupt();
