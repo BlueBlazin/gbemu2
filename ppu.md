@@ -13,13 +13,13 @@ I am breaking the PPU down into two parts. The PPU data and the PPU operation.
 - Color 0 has special meaning in objects - it's transparent allowing bg or other objs behind to show through
 
 Three "blocks" of 128 tiles:
-Tile IDs for... | Block 0 | Block 1 | Block 2
---- | --- | --- | ---
-$8000–87FF | $8800–8FFF | $9000–97FF
-Objects 0–127|128–255|—
-BG/Win, if LCDC.4=1|0–127|128–255|—
-BG/Win, if LCDC.4=0|—|128–255|0–127
-3
+
+| Tile IDs for...     | Block 0    | Block 1    | Block 2 |
+| ------------------- | ---------- | ---------- | ------- |
+| $8000–87FF          | $8800–8FFF | $9000–97FF |
+| Objects 0–127       | 128–255    | —          |
+| BG/Win, if LCDC.4=1 | 0–127      | 128–255    | —       |
+| BG/Win, if LCDC.4=0 | —          | 128–255    | 0–127   |
 
 #### Tile Indexing
 
@@ -205,3 +205,116 @@ Value|Color
 #### FF48–FF49 — OBP0, OBP1 (Non-CGB Mode only): OBJ palette 0, 1 data
 
 These registers assigns gray shades to the color indexes of the OBJs that use the corresponding palette. They work exactly like BGP, except that the lower two bits are ignored because color index 0 is transparent for OBJs
+
+## PPU Operation
+
+- PPU draws frame progressively and directly to the screen
+- Frame consists of 154 scanlines. During first 144, screen is drawn top to bottom, left to right
+- 4 "dots" per M-cycle
+
+### PPU Modes
+
+PPU cycles through 4 modes during a frame:
+
+1. Mode 2: OAM scan. 80 dots
+2. Mode 3: Drawing pixels. 172-289 dots
+3. Mode 0: Horizontal Blank. 87-204 dots
+4. Mode 1: Vertical blank. 10 "scanlines" 4560 dots
+
+Each line: 456 dots
+One frame: 70224 dots
+
+While PPU is accessing video-related memory, that memory is inaccessible to CPU (writes are ignored and reads return $FF)
+
+| Mode | Action                                     | Duration                            | Accessible video memory |
+| ---- | ------------------------------------------ | ----------------------------------- | ----------------------- |
+| 2    | Searching for OBJs which overlap this line | 80 dots                             | VRAM, CGB palettes      |
+| 3    | Sending pixels to the LCD                  | Between 172 and 289 dots, see below | None                    |
+| 0    | Waiting until the end of the scanline      | 376 - mode 3’s duration             | VRAM, OAM, CGB palettes |
+| 1    | Waiting until the next frame               | 4560 dots (10 scanlines)            | VRAM, OAM, CGB palettes |
+
+#### Mode 3 length
+
+- During Mode 3, by default the PPU outputs one pixel to the screen per dot, from left to right; the screen is 160 pixels wide, so the minimum Mode 3 length is 160 + 12 = 172 dots.
+- Game Boy does not always output pixels steadily. ome features cause the rendering process to stall for a couple dots
+- Any extra time spent stalling lengthens Mode 3; but since scanlines last for a fixed number of dots, Mode 0 is therefore shortened by that same amount of time
+
+Three things can cause Mode 3 “penalties”:
+
+1. Background scrolling: At the very beginning of Mode 3, rendering is paused for SCX % 8 dots while the same number of pixels are discarded from the leftmost tile.
+2. Window: After the last non-window pixel is emitted, a 6-dot penalty is incurred while the BG fetcher is being set up for the window.
+3. Objects: Each object drawn during the scanline (even partially) incurs a 6- to 11-dot penalty
+
+mid-scanline writes to BGP allow observing this behavior precisely, as any delay shifts the write’s effect to the left by that many dots
+
+#### OBJ penalty algorithm
+
+Only the OBJ’s leftmost pixel matters here, transparent or not
+
+1. Determine the tile (bg or window) that The Pixel is within. (This is affected by horizontal scrolling and/or the window)
+2. If that tile has not been considered by a previous OBJ yet:
+   1. Count how many of that tile’s pixels are strictly to the right of The Pixel
+   2. Subtract 2
+   3. Incur this many dots of penalty, or zero if negative (from waiting for the BG fetch to finish)
+3. Incur a flat, 6-dot penalty (from fetching the OBJ’s tile)
+   Exception: an OBJ with an OAM X position of 0 (thus, completely off the left side of the screen) always incurs a 11-dot penalty, regardless of SCX
+
+### Pixel FIFO
+
+- There are two pixel FIFOs. One for bg pixels one for object/sprite pixels
+- They are independent of each other and values from two are only mixed when popping items
+- Objects take priority unless transparent (color 0)
+- Each FIFO can hold up to 16 pixels
+- FIFO and Pixel Fetcher work together to ensure FIFO always contains at least 8 pixels at any given time
+- Each FIFO is only manipulated during Mode 3
+
+Each pixel FIFO has 3 properties:
+
+- Color: a value between 0 and 3
+- Palette: only applies to objects
+- Background Priority: holds the value of the OBJ-to-BG Priority bit
+
+#### FIFO Pixel Fetcher
+
+Fetches a row of 8 background or window pixels and queues them up to be mixed with object pixels
+Pixel fetcher has 5 steps. The first four steps take 2 dots each and the fifth step is attempted every dot until it succeeds. Order of steps:
+
+1. Get tile
+2. Get tile data low
+3. Get tile data high
+4. Sleep
+5. Push
+
+##### Get Tile
+
+- Determines which background/window tile to fetch pixels from. By default the tilemap used is the one at $9800 but certain conditions can change that
+- When LCDC.3 is enabled and the X coordinate of the current scanline is not inside the window then tilemap $9C00 is used
+- When LCDC.6 is enabled and the X coordinate of the current scanline is inside the window then tilemap $9C00 is used
+- The fetcher keeps track of which X and Y coordinate of the tile it’s on
+- If the current tile is a window tile, the X coordinate for the window tile is used, otherwise the following formula is used to calculate the X coordinate: ((SCX / 8) + fetcher’s X coordinate) & $1F. Because of this formula, fetcherX can be between 0 and 31
+- If the current tile is a window tile, the Y coordinate for the window tile is used, otherwise the following formula is used to calculate the Y coordinate: (currentScanline + SCY) & 255. Because of this formula, fetcherY can be between 0 and 255
+- fetcher’s X and Y coordinate can then be used to get the tile from VRAM. However, if the PPU’s access to VRAM is blocked then the value for the tile is read as $FF
+
+##### Get Tile Data Low
+
+- Check LCDC.4 for which tilemap to use
+- Tile data is retrieved from VRAM. However, if the PPU’s access to VRAM is blocked then the tile data is read as $FF
+
+##### Get Tile Data High
+
+- Same as Get Tile Data Low except the tile address is incremented by 1
+- This also pushes a row of background/window pixels to the FIFO. This extra push is not part of the 8 steps, meaning there’s 3 total chances to push pixels to the background FIFO every time the complete fetcher steps are performed
+
+##### Push
+
+- Pushes a row of background/window pixels to the FIFO. Since tiles are 8 pixels wide, a “row” of pixels is 8 pixels from the tile to be rendered based on the X and Y coordinates calculated in the previous steps
+- Pixels are only pushed to the background FIFO if it’s empty
+- This is where the tile data retrieved in the two Tile Data steps will come in handy. Depending on if the tile is flipped horizontally the pixels will be pushed to the background FIFO differently. If the tile is flipped horizontally the pixels will be pushed LSB first. Otherwise they will be pushed MSB first
+
+##### Sleep
+
+- Do nothing
+
+#### Mode 3 Operation
+
+- Pixel FIFO only operates during mode 3. At the beginning of mode 3 both the background and OAM FIFOs are cleared

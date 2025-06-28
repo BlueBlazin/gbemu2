@@ -97,6 +97,9 @@ pub struct PpuState {
     // OAM - 40 objects, 4 bytes each
     pub oam: [OamEntry; 40],
 
+    // LCD framebuffer - 160x144 pixels, 4 colors (0-3)
+    pub framebuffer: [[u8; 160]; 144],
+
     // Internal PPU state
     pub ppu_mode: u8,         // Current PPU mode (0-3)
     pub dots: u16,            // Current dot/cycle within scanline
@@ -119,6 +122,7 @@ impl PpuState {
             obp0: 0xFF, // Default object palette 0
             obp1: 0xFF, // Default object palette 1
             oam: [OamEntry::new(); 40],
+            framebuffer: [[0; 160]; 144], // Initialize to color 0 (white)
             ppu_mode: 2, // Start in mode 2 (OAM scan)
             dots: 0,
             window_line: 0,
@@ -283,4 +287,319 @@ impl PpuState {
     pub fn get_window_x(&self) -> i16 {
         (self.wx as i16) - 7
     }
+
+    // Framebuffer access methods
+    pub fn set_pixel(&mut self, x: usize, y: usize, color: u8) {
+        if x < 160 && y < 144 {
+            self.framebuffer[y][x] = color & 0x03; // Ensure only 2 bits (0-3)
+        }
+    }
+
+    pub fn get_pixel(&self, x: usize, y: usize) -> u8 {
+        if x < 160 && y < 144 {
+            self.framebuffer[y][x]
+        } else {
+            0 // Return white for out-of-bounds
+        }
+    }
+
+    pub fn clear_framebuffer(&mut self) {
+        self.framebuffer = [[0; 160]; 144];
+    }
+
+    // Get reference to framebuffer for external rendering
+    pub fn get_framebuffer(&self) -> &[[u8; 160]; 144] {
+        &self.framebuffer
+    }
+}
+
+use crate::driver::sleep;
+use crate::emulator::{with_state, with_state_mut};
+
+// PPU timing constants
+const DOTS_PER_SCANLINE: u16 = 456;
+const SCANLINES_PER_FRAME: u8 = 154;
+const VISIBLE_SCANLINES: u8 = 144;
+const VBLANK_SCANLINES: u8 = 10;
+
+// Mode timings
+const OAM_SCAN_DOTS: u16 = 80;
+const DRAWING_MIN_DOTS: u16 = 172;
+const DRAWING_MAX_DOTS: u16 = 289;
+const HBLANK_MIN_DOTS: u16 = 87;
+const HBLANK_MAX_DOTS: u16 = 204;
+const VBLANK_DOTS: u16 = 4560;
+
+// PPU Modes
+const MODE_HBLANK: u8 = 0;
+const MODE_VBLANK: u8 = 1;
+const MODE_OAM_SCAN: u8 = 2;
+const MODE_DRAWING: u8 = 3;
+
+// Structure to hold objects found during OAM scan
+#[derive(Debug, Clone, Copy)]
+struct SelectedObject {
+    oam_index: u8,
+    x: u8,
+    y: u8,
+    tile_index: u8,
+    attributes: u8,
+}
+
+// Main PPU async function
+pub async fn ppu() {
+    loop {
+        // Check if LCD is enabled
+        if !with_state(|state| state.ppu.lcd_enable()) {
+            // LCD is disabled - PPU is inactive
+            sleep(1).await; // Wait one dot and check again
+            continue;
+        }
+
+        // Execute one complete frame
+        execute_frame().await;
+    }
+}
+
+async fn execute_frame() {
+    // Reset frame state
+    with_state_mut(|state| {
+        state.ppu.ly = 0;
+        state.ppu.dots = 0;
+        state.ppu.frame_complete = false;
+        state.ppu.window_line = 0;
+    });
+
+    // Execute visible scanlines (0-143)
+    for scanline in 0..VISIBLE_SCANLINES {
+        with_state_mut(|state| state.ppu.ly = scanline);
+        execute_visible_scanline().await;
+    }
+
+    // Execute VBlank scanlines (144-153)
+    for scanline in VISIBLE_SCANLINES..SCANLINES_PER_FRAME {
+        with_state_mut(|state| state.ppu.ly = scanline);
+        execute_vblank_scanline().await;
+    }
+
+    // Mark frame as complete
+    with_state_mut(|state| state.ppu.frame_complete = true);
+}
+
+async fn execute_visible_scanline() {
+    // Reset scanline state
+    with_state_mut(|state| state.ppu.dots = 0);
+
+    // Mode 2: OAM Scan (80 dots)
+    execute_oam_scan().await;
+
+    // Mode 3: Drawing (172-289 dots, variable based on penalties)
+    execute_drawing().await;
+
+    // Mode 0: HBlank (remaining dots until 456 total)
+    execute_hblank().await;
+}
+
+async fn execute_vblank_scanline() {
+    // Set mode to VBlank
+    with_state_mut(|state| {
+        state.ppu.set_mode(MODE_VBLANK);
+        state.ppu.update_lyc_ly_flag();
+    });
+
+    // TODO: Trigger VBlank interrupt if enabled
+
+    // Wait for full scanline duration
+    sleep(DOTS_PER_SCANLINE as usize).await;
+}
+
+async fn execute_oam_scan() {
+    // Set mode to OAM scan
+    with_state_mut(|state| {
+        state.ppu.set_mode(MODE_OAM_SCAN);
+        state.ppu.update_lyc_ly_flag();
+    });
+
+    // TODO: Trigger Mode 2 interrupt if enabled
+
+    // Scan OAM for objects on current scanline
+    let selected_objects = scan_oam_for_objects().await;
+
+    // TODO: Store selected objects for use in drawing mode
+
+    // Wait for OAM scan duration
+    sleep(OAM_SCAN_DOTS as usize).await;
+}
+
+async fn execute_drawing() {
+    // Set mode to drawing
+    with_state_mut(|state| state.ppu.set_mode(MODE_DRAWING));
+
+    // TODO: Trigger Mode 3 interrupt if enabled
+
+    // Calculate drawing duration based on penalties
+    let drawing_dots = calculate_drawing_duration().await;
+
+    // TODO: Initialize pixel FIFO and render scanline
+    render_scanline().await;
+
+    // Wait for drawing duration
+    sleep(drawing_dots as usize).await;
+}
+
+async fn execute_hblank() {
+    // Set mode to HBlank
+    with_state_mut(|state| state.ppu.set_mode(MODE_HBLANK));
+
+    // TODO: Trigger Mode 0 interrupt if enabled
+
+    // Calculate remaining dots for HBlank
+    let current_dots = with_state(|state| state.ppu.dots);
+    let hblank_dots = DOTS_PER_SCANLINE - current_dots;
+
+    // Wait for HBlank duration
+    sleep(hblank_dots as usize).await;
+}
+
+async fn scan_oam_for_objects() -> Vec<SelectedObject> {
+    let mut selected_objects = Vec::new();
+    let ly = with_state(|state| state.ppu.ly);
+    let obj_size = with_state(|state| state.ppu.obj_size());
+    let obj_height = if obj_size { 16 } else { 8 };
+
+    // Scan all 40 OAM entries
+    for i in 0..40 {
+        let oam_entry = with_state(|state| state.ppu.oam[i]);
+        
+        // Check if object is on current scanline
+        let obj_y = oam_entry.y.wrapping_sub(16);
+        if ly >= obj_y && ly < obj_y.wrapping_add(obj_height) {
+            selected_objects.push(SelectedObject {
+                oam_index: i as u8,
+                x: oam_entry.x,
+                y: oam_entry.y,
+                tile_index: oam_entry.tile_index,
+                attributes: oam_entry.attributes,
+            });
+
+            // Maximum 10 objects per scanline
+            if selected_objects.len() >= 10 {
+                break;
+            }
+        }
+    }
+
+    // Sort by X position for proper priority
+    selected_objects.sort_by_key(|obj| obj.x);
+
+    selected_objects
+}
+
+async fn calculate_drawing_duration() -> u16 {
+    let mut dots = DRAWING_MIN_DOTS;
+
+    // Penalty 1: Background scrolling (SCX % 8 dots)
+    let scx_penalty = with_state(|state| (state.ppu.scx % 8) as u16);
+    dots += scx_penalty;
+
+    // TODO: Penalty 2: Window rendering (6 dots when window starts)
+    // TODO: Penalty 3: Object rendering (6-11 dots per object)
+
+    // Ensure we don't exceed maximum
+    dots.min(DRAWING_MAX_DOTS)
+}
+
+async fn render_scanline() {
+    // TODO: Implement pixel FIFO rendering
+    // This is a placeholder for the complex pixel FIFO system
+    
+    // For now, just simulate the basic rendering process
+    let ly = with_state(|state| state.ppu.ly);
+    let bg_enabled = with_state(|state| state.ppu.bg_window_enable());
+    let window_enabled = with_state(|state| state.ppu.should_render_window());
+    let obj_enabled = with_state(|state| state.ppu.obj_enable());
+
+    // TODO: Initialize background fetcher
+    if bg_enabled {
+        render_background_line().await;
+    }
+
+    // TODO: Handle window rendering
+    if window_enabled {
+        render_window_line().await;
+    }
+
+    // TODO: Handle object rendering  
+    if obj_enabled {
+        render_objects_line().await;
+    }
+
+    // TODO: Mix pixels and output to framebuffer
+}
+
+async fn render_background_line() {
+    // TODO: Implement background tile fetching and pixel generation
+    // This involves:
+    // 1. Calculate tile map address based on SCY/SCX
+    // 2. Fetch tile indices from tile map
+    // 3. Fetch tile data from tile data area
+    // 4. Generate pixels with palette application
+    
+    // Placeholder: simulate fetching 160 pixels worth of tiles
+    for pixel in 0..160 {
+        // TODO: Implement actual background pixel fetching
+        sleep(1).await; // Simulate one dot per pixel (minimum)
+    }
+}
+
+async fn render_window_line() {
+    // TODO: Implement window tile fetching
+    // Similar to background but uses window tile map and WX/WY positioning
+    
+    // Check if window should be rendered on this scanline
+    let should_render = with_state(|state| state.ppu.should_render_window());
+    if !should_render {
+        return;
+    }
+
+    // TODO: Implement window pixel generation
+    // Increment internal window line counter
+    with_state_mut(|state| state.ppu.window_line += 1);
+}
+
+async fn render_objects_line() {
+    // TODO: Implement object/sprite rendering
+    // This involves:
+    // 1. Use objects selected during OAM scan
+    // 2. Fetch sprite tile data
+    // 3. Apply palette and transparency
+    // 4. Handle priority and overlap
+    
+    // Placeholder for object rendering
+}
+
+// Memory access functions for PPU (similar to CPU pattern)
+async fn ppu_vram_read(address: u16) -> u8 {
+    sleep(4).await; // VRAM access takes 4 cycles
+    with_state(|state| state.mmu.read(address))
+}
+
+async fn ppu_oam_read(address: u16) -> u8 {
+    sleep(4).await; // OAM access takes 4 cycles  
+    with_state(|state| state.mmu.read(address))
+}
+
+// Helper function to check if PPU can access memory
+fn can_access_vram() -> bool {
+    with_state(|state| {
+        let mode = state.ppu.ppu_mode;
+        mode != MODE_DRAWING // VRAM accessible in modes 0, 1, 2 but not 3
+    })
+}
+
+fn can_access_oam() -> bool {
+    with_state(|state| {
+        let mode = state.ppu.ppu_mode;
+        mode == MODE_HBLANK || mode == MODE_VBLANK // OAM accessible in modes 0, 1 only
+    })
 }

@@ -1,5 +1,6 @@
 use crate::cpu;
 use crate::driver::Driver;
+use crate::ppu;
 use crate::state::EmulatorState;
 use std::cell::RefCell;
 
@@ -35,7 +36,10 @@ pub fn run_emulator() {
     // Spawn CPU component
     driver.spawn(cpu::cpu());
 
-    // TODO: Add other components (PPU, APU, etc.)
+    // Spawn PPU component
+    driver.spawn(ppu::ppu());
+
+    // TODO: Add other components (APU, etc.)
 
     driver.run();
 }
