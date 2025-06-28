@@ -105,6 +105,14 @@ pub struct PpuState {
     pub dots: u16,            // Current dot/cycle within scanline
     pub window_line: u8,      // Internal window line counter
     pub frame_complete: bool, // Flag for frame completion
+
+    // Pixel FIFO state (not public, managed internally)
+    bg_fifo: PixelFifo,
+    obj_fifo: PixelFifo,
+    fetcher: PixelFetcher,
+    pixel_x: u8,               // Current pixel X position (0-159)
+    window_triggered: bool,    // Whether window has been triggered this scanline
+    scx_penalty_applied: bool, // Whether SCX penalty has been applied
 }
 
 impl PpuState {
@@ -123,10 +131,16 @@ impl PpuState {
             obp1: 0xFF, // Default object palette 1
             oam: [OamEntry::new(); 40],
             framebuffer: [[0; 160]; 144], // Initialize to color 0 (white)
-            ppu_mode: 2, // Start in mode 2 (OAM scan)
+            ppu_mode: 2,                  // Start in mode 2 (OAM scan)
             dots: 0,
             window_line: 0,
             frame_complete: false,
+            bg_fifo: PixelFifo::new(),
+            obj_fifo: PixelFifo::new(),
+            fetcher: PixelFetcher::new(),
+            pixel_x: 0,
+            window_triggered: false,
+            scx_penalty_applied: false,
         }
     }
 
@@ -346,6 +360,126 @@ struct SelectedObject {
     attributes: u8,
 }
 
+// Pixel FIFO structures
+#[derive(Debug, Clone, Copy)]
+struct FifoPixel {
+    color: u8,         // 0-3
+    palette: bool,     // For objects: false = OBP0, true = OBP1
+    bg_priority: bool, // OBJ-to-BG Priority bit
+}
+
+impl FifoPixel {
+    fn new(color: u8, palette: bool, bg_priority: bool) -> Self {
+        Self {
+            color: color & 0x03,
+            palette,
+            bg_priority,
+        }
+    }
+
+    fn transparent() -> Self {
+        Self {
+            color: 0,
+            palette: false,
+            bg_priority: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PixelFifo {
+    pixels: Vec<FifoPixel>,
+}
+
+impl PixelFifo {
+    fn new() -> Self {
+        Self {
+            pixels: Vec::with_capacity(16),
+        }
+    }
+
+    fn push(&mut self, pixel: FifoPixel) {
+        if self.pixels.len() < 16 {
+            self.pixels.push(pixel);
+        }
+    }
+
+    fn pop(&mut self) -> Option<FifoPixel> {
+        if !self.pixels.is_empty() {
+            Some(self.pixels.remove(0))
+        } else {
+            None
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pixels.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.pixels.len()
+    }
+
+    fn clear(&mut self) {
+        self.pixels.clear();
+    }
+
+    fn fill_with_transparent(&mut self, count: usize) {
+        for _ in 0..count.min(16 - self.pixels.len()) {
+            self.pixels.push(FifoPixel::transparent());
+        }
+    }
+}
+
+// Pixel Fetcher states
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FetcherStep {
+    GetTile = 1,
+    GetTileDataLow = 2,
+    GetTileDataHigh = 3,
+    Sleep = 4,
+    Push = 5,
+}
+
+#[derive(Debug, Clone)]
+struct PixelFetcher {
+    step: FetcherStep,
+    x: u8,              // Fetcher X coordinate (0-31)
+    y: u8,              // Fetcher Y coordinate (0-255)
+    tile_index: u8,     // Current tile being fetched
+    tile_data_low: u8,  // Low byte of tile data
+    tile_data_high: u8, // High byte of tile data
+    is_window: bool,    // Whether currently fetching window
+}
+
+impl PixelFetcher {
+    fn new() -> Self {
+        Self {
+            step: FetcherStep::GetTile,
+            x: 0,
+            y: 0,
+            tile_index: 0,
+            tile_data_low: 0,
+            tile_data_high: 0,
+            is_window: false,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.step = FetcherStep::GetTile;
+    }
+
+    fn advance_step(&mut self) {
+        self.step = match self.step {
+            FetcherStep::GetTile => FetcherStep::GetTileDataLow,
+            FetcherStep::GetTileDataLow => FetcherStep::GetTileDataHigh,
+            FetcherStep::GetTileDataHigh => FetcherStep::Sleep,
+            FetcherStep::Sleep => FetcherStep::Push,
+            FetcherStep::Push => FetcherStep::GetTile,
+        };
+    }
+}
+
 // Main PPU async function
 pub async fn ppu() {
     loop {
@@ -470,7 +604,7 @@ async fn scan_oam_for_objects() -> Vec<SelectedObject> {
     // Scan all 40 OAM entries
     for i in 0..40 {
         let oam_entry = with_state(|state| state.ppu.oam[i]);
-        
+
         // Check if object is on current scanline
         let obj_y = oam_entry.y.wrapping_sub(16);
         if ly >= obj_y && ly < obj_y.wrapping_add(obj_height) {
@@ -510,72 +644,287 @@ async fn calculate_drawing_duration() -> u16 {
 }
 
 async fn render_scanline() {
-    // TODO: Implement pixel FIFO rendering
-    // This is a placeholder for the complex pixel FIFO system
-    
-    // For now, just simulate the basic rendering process
-    let ly = with_state(|state| state.ppu.ly);
-    let bg_enabled = with_state(|state| state.ppu.bg_window_enable());
-    let window_enabled = with_state(|state| state.ppu.should_render_window());
-    let obj_enabled = with_state(|state| state.ppu.obj_enable());
+    // Initialize FIFO state for the scanline
+    with_state_mut(|state| {
+        state.ppu.bg_fifo.clear();
+        state.ppu.obj_fifo.clear();
+        state.ppu.fetcher.reset();
+        state.ppu.pixel_x = 0;
+        state.ppu.window_triggered = false;
+        state.ppu.scx_penalty_applied = false;
+    });
 
-    // TODO: Initialize background fetcher
-    if bg_enabled {
-        render_background_line().await;
-    }
+    // Apply SCX penalty if needed
+    apply_scx_penalty().await;
 
-    // TODO: Handle window rendering
-    if window_enabled {
-        render_window_line().await;
-    }
+    // Main pixel rendering loop
+    while with_state(|state| state.ppu.pixel_x < 160) {
+        // Ensure we have enough pixels in background FIFO
+        while with_state(|state| state.ppu.bg_fifo.len() < 8) {
+            step_fetcher().await;
+        }
 
-    // TODO: Handle object rendering  
-    if obj_enabled {
-        render_objects_line().await;
-    }
+        // Check for window trigger
+        check_window_trigger().await;
 
-    // TODO: Mix pixels and output to framebuffer
-}
+        // Process objects if enabled
+        if with_state(|state| state.ppu.obj_enable()) {
+            process_objects_at_pixel().await;
+        }
 
-async fn render_background_line() {
-    // TODO: Implement background tile fetching and pixel generation
-    // This involves:
-    // 1. Calculate tile map address based on SCY/SCX
-    // 2. Fetch tile indices from tile map
-    // 3. Fetch tile data from tile data area
-    // 4. Generate pixels with palette application
-    
-    // Placeholder: simulate fetching 160 pixels worth of tiles
-    for pixel in 0..160 {
-        // TODO: Implement actual background pixel fetching
-        sleep(1).await; // Simulate one dot per pixel (minimum)
+        // Render a pixel
+        render_pixel().await;
+
+        // Advance pixel position
+        with_state_mut(|state| state.ppu.pixel_x += 1);
     }
 }
 
-async fn render_window_line() {
-    // TODO: Implement window tile fetching
-    // Similar to background but uses window tile map and WX/WY positioning
-    
-    // Check if window should be rendered on this scanline
-    let should_render = with_state(|state| state.ppu.should_render_window());
-    if !should_render {
+async fn apply_scx_penalty() {
+    let scx_penalty = with_state(|state| state.ppu.scx % 8);
+    if scx_penalty > 0 {
+        sleep(scx_penalty as usize).await;
+        with_state_mut(|state| state.ppu.scx_penalty_applied = true);
+    }
+}
+
+async fn step_fetcher() {
+    let step = with_state(|state| state.ppu.fetcher.step);
+
+    match step {
+        FetcherStep::GetTile => {
+            execute_get_tile().await;
+            sleep(2).await; // Get Tile takes 2 dots
+        }
+        FetcherStep::GetTileDataLow => {
+            execute_get_tile_data_low().await;
+            sleep(2).await; // Get Tile Data Low takes 2 dots
+        }
+        FetcherStep::GetTileDataHigh => {
+            execute_get_tile_data_high().await;
+            sleep(2).await; // Get Tile Data High takes 2 dots
+        }
+        FetcherStep::Sleep => {
+            sleep(2).await; // Sleep takes 2 dots
+        }
+        FetcherStep::Push => {
+            // Push step is attempted every dot until it succeeds
+            let success = execute_push().await;
+            sleep(1).await; // Always takes at least 1 dot
+
+            if !success {
+                // Push failed, don't advance step
+                return;
+            }
+        }
+    }
+
+    // Advance to next step
+    with_state_mut(|state| state.ppu.fetcher.advance_step());
+}
+
+async fn execute_get_tile() {
+    let (is_window, ly, scx, scy, window_line) = with_state(|state| {
+        (
+            state.ppu.fetcher.is_window,
+            state.ppu.ly,
+            state.ppu.scx,
+            state.ppu.scy,
+            state.ppu.window_line,
+        )
+    });
+
+    let (tile_x, tile_y) = if is_window {
+        // Window coordinates
+        let window_x = with_state(|state| state.ppu.fetcher.x);
+        (window_x, window_line)
+    } else {
+        // Background coordinates
+        let bg_x = ((scx / 8) + with_state(|state| state.ppu.fetcher.x)) & 0x1F;
+        let bg_y = (ly.wrapping_add(scy)) & 0xFF;
+        (bg_x, bg_y)
+    };
+
+    // Determine which tile map to use
+    let tile_map_base = if is_window {
+        with_state(|state| state.ppu.get_window_tile_map_base())
+    } else {
+        with_state(|state| state.ppu.get_bg_tile_map_base())
+    };
+
+    // Calculate tile address
+    let tile_addr = tile_map_base + ((tile_y as u16 / 8) * 32) + (tile_x as u16);
+
+    // Read tile index
+    let tile_index = if can_access_vram() {
+        ppu_vram_read(tile_addr).await
+    } else {
+        0xFF
+    };
+
+    with_state_mut(|state| {
+        state.ppu.fetcher.tile_index = tile_index;
+        state.ppu.fetcher.x = tile_x;
+        state.ppu.fetcher.y = tile_y;
+    });
+}
+
+async fn execute_get_tile_data_low() {
+    let (tile_index, tile_y) =
+        with_state(|state| (state.ppu.fetcher.tile_index, state.ppu.fetcher.y));
+
+    let tile_addr = with_state(|state| state.ppu.get_tile_address(tile_index));
+    let tile_line = tile_y % 8;
+    let data_addr = tile_addr + (tile_line as u16 * 2);
+
+    let tile_data_low = if can_access_vram() {
+        ppu_vram_read(data_addr).await
+    } else {
+        0xFF
+    };
+
+    with_state_mut(|state| state.ppu.fetcher.tile_data_low = tile_data_low);
+}
+
+async fn execute_get_tile_data_high() {
+    let (tile_index, tile_y) =
+        with_state(|state| (state.ppu.fetcher.tile_index, state.ppu.fetcher.y));
+
+    let tile_addr = with_state(|state| state.ppu.get_tile_address(tile_index));
+    let tile_line = tile_y % 8;
+    let data_addr = tile_addr + (tile_line as u16 * 2) + 1;
+
+    let tile_data_high = if can_access_vram() {
+        ppu_vram_read(data_addr).await
+    } else {
+        0xFF
+    };
+
+    with_state_mut(|state| state.ppu.fetcher.tile_data_high = tile_data_high);
+}
+
+async fn execute_push() -> bool {
+    // Only push if background FIFO is empty
+    let can_push = with_state(|state| state.ppu.bg_fifo.is_empty());
+
+    if !can_push {
+        return false;
+    }
+
+    let (tile_data_low, tile_data_high) = with_state(|state| {
+        (
+            state.ppu.fetcher.tile_data_low,
+            state.ppu.fetcher.tile_data_high,
+        )
+    });
+
+    // Generate 8 pixels from tile data
+    for bit_pos in 0..8 {
+        let bit = 7 - bit_pos; // MSB first (unless flipped)
+        let low_bit = (tile_data_low >> bit) & 1;
+        let high_bit = (tile_data_high >> bit) & 1;
+        let color = (high_bit << 1) | low_bit;
+
+        let pixel = FifoPixel::new(color, false, false);
+
+        with_state_mut(|state| state.ppu.bg_fifo.push(pixel));
+    }
+
+    // Advance fetcher X position
+    with_state_mut(|state| state.ppu.fetcher.x = (state.ppu.fetcher.x + 1) & 0x1F);
+
+    true
+}
+
+async fn check_window_trigger() {
+    let (should_render_window, pixel_x, window_triggered, wx) = with_state(|state| {
+        (
+            state.ppu.should_render_window(),
+            state.ppu.pixel_x,
+            state.ppu.window_triggered,
+            state.ppu.wx,
+        )
+    });
+
+    if should_render_window && !window_triggered && pixel_x >= wx.saturating_sub(7) {
+        // Trigger window - clear BG FIFO and reset fetcher
+        with_state_mut(|state| {
+            state.ppu.bg_fifo.clear();
+            state.ppu.fetcher.reset();
+            state.ppu.fetcher.is_window = true;
+            state.ppu.window_triggered = true;
+        });
+
+        // 6-dot penalty for window
+        sleep(6).await;
+    }
+}
+
+async fn process_objects_at_pixel() {
+    // TODO: Implement object processing
+    // This is complex and involves:
+    // - Finding objects at current pixel
+    // - Fetching object tile data
+    // - Mixing with OAM FIFO
+    // - Handling penalties and priority
+}
+
+async fn render_pixel() {
+    let bg_pixel = with_state_mut(|state| state.ppu.bg_fifo.pop());
+    let obj_pixel = with_state_mut(|state| state.ppu.obj_fifo.pop());
+
+    let (pixel_x, ly, bg_enabled) = with_state(|state| {
+        (
+            state.ppu.pixel_x,
+            state.ppu.ly,
+            state.ppu.bg_window_enable(),
+        )
+    });
+
+    // Skip rendering if we're past the visible area
+    if pixel_x >= 160 {
         return;
     }
 
-    // TODO: Implement window pixel generation
-    // Increment internal window line counter
-    with_state_mut(|state| state.ppu.window_line += 1);
-}
+    let final_color = if let Some(bg_pixel) = bg_pixel {
+        if let Some(obj_pixel) = obj_pixel {
+            // Mix background and object pixels
+            if obj_pixel.color != 0 {
+                // Object pixel is not transparent
+                // Object has priority unless bg has higher priority
+                if obj_pixel.bg_priority && bg_pixel.color != 0 {
+                    // Background has priority
+                    with_state(|state| state.ppu.get_bg_color(bg_pixel.color))
+                } else {
+                    // Object has priority
+                    with_state(|state| state.ppu.get_obj_color(obj_pixel.palette, obj_pixel.color))
+                }
+            } else {
+                // Object is transparent, use background
+                if bg_enabled {
+                    with_state(|state| state.ppu.get_bg_color(bg_pixel.color))
+                } else {
+                    0 // Background disabled
+                }
+            }
+        } else {
+            // No object pixel, use background
+            if bg_enabled {
+                with_state(|state| state.ppu.get_bg_color(bg_pixel.color))
+            } else {
+                0 // Background disabled
+            }
+        }
+    } else {
+        0 // No pixels available
+    };
 
-async fn render_objects_line() {
-    // TODO: Implement object/sprite rendering
-    // This involves:
-    // 1. Use objects selected during OAM scan
-    // 2. Fetch sprite tile data
-    // 3. Apply palette and transparency
-    // 4. Handle priority and overlap
-    
-    // Placeholder for object rendering
+    // Write pixel to framebuffer
+    with_state_mut(|state| {
+        state
+            .ppu
+            .set_pixel(pixel_x as usize, ly as usize, final_color);
+    });
 }
 
 // Memory access functions for PPU (similar to CPU pattern)

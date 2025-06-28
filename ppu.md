@@ -318,3 +318,34 @@ Pixel fetcher has 5 steps. The first four steps take 2 dots each and the fifth s
 #### Mode 3 Operation
 
 - Pixel FIFO only operates during mode 3. At the beginning of mode 3 both the background and OAM FIFOs are cleared
+
+##### The Window
+
+- When rendering the window the background FIFO is cleared and the fetcher is reset to step 1
+- When WX is 0 and the SCX & 7 > 0 mode 3 is shortened by 1 dot
+- When the window has already started rendering there is a bug that occurs when WX is changed mid-scanline. When the value of WX changes after the window has started rendering and the new value of WX is reached again, a pixel with color value of 0 and the lowest priority is pushed onto the background FIFO
+
+##### Sprites
+
+- The following is performed for each object on the current scanline if LCDC.1 is enabled and the X coordinate of the current scanline has an object on it. If those conditions are not met then object fetching is canceled
+- At this point the fetcher is advanced one step until it’s at step 5 or until the background FIFO is not empty. Advancing the fetcher one step here lengthens mode 3 by 1 dot. This process may be canceled after the fetcher has advanced a step
+- When SCX & 7 > 0 and there is an object at X coordinate 0 of the current scanline then mode 3 is lengthened. The amount of dots this lengthens mode 3 by is whatever the lower 3 bits of SCX are. After this penalty is applied object fetching may be canceled
+- After checking for objects at X coordinate 0 the fetcher is advanced two steps. First advancement lengthens mode 3 by 1 dot and the second advancement lengthens mode 3 by 3 dots
+- The lower address for the row of pixels of the target object tile is now retrieved and lengthens mode 3 by 1 dot. Exiting object fetch lengthens mode 3 by 1 dot. The upper address for the target object tile is now retrieved and does not shorten mode 3
+- At this point VRAM Access is checked for the lower and upper addresses for the target object. Before any mixing is done, if the OAM FIFO doesn’t have at least 8 pixels in it then transparent pixels with the lowest priority are pushed onto the OAM FIFO. Once this is done each pixel of the target object row is checked
+- If the target object pixel is not white and the pixel in the OAM FIFO is white, or if the pixel in the OAM FIFO has higher priority than the target object’s pixel, then the pixel in the OAM FIFO is replaced with the target object’s properties
+- Now it’s time to render a pixel! The same process described in Object Fetch Canceling is performed: a pixel is rendered and the fetcher is advanced one step. This advancement lengthens mode 3 by 1 dot if the X coordinate of the current scanline is not 160. If the X coordinate is 160 the PPU stops processing objects (because they won’t be visible)
+- Everything in this section is repeated for every object on the current scanline unless it was decided that fetching should be canceled or the X coordinate is 160
+
+##### Pixel Rendering
+
+- This is where the background FIFO and OAM FIFO are mixed
+- If there are pixels in the background and OAM FIFOs then a pixel is popped off each. If the OAM pixel is not transparent and LCDC.1 is enabled then the OAM pixel’s background priority property is used if it’s the same or higher priority as the background pixel’s background priority
+- Pixels won’t be pushed to the LCD if there is nothing in the background FIFO or the current pixel is pixel 160 or greater
+- If LCDC.0 is disabled then the background is disabled. When the background pixel is disabled the pixel color value will be 0, otherwise the color value will be whatever color pixel was popped off the background FIFO. When the pixel popped off the background FIFO has a color value other than 0 and it has priority then the object pixel will be discarded
+- At this point the color of the pixel is retrieved from the BGP register and pushed to the LCD
+- When an object pixel has priority, the color value is retrieved from the popped pixel from the OAM FIFO. The color for the pixel is retrieved from either the OBP1 or OBP0 register depending on the pixel’s palette property. If the palette property is 1 then OBP1 is used, otherwise OBP0 is used. The pixel is then pushed to the LCD
+
+##### Object Fetch Canceling
+
+Object fetching may be canceled if LCDC.1 is disabled while the PPU is fetching an object from OAM. This canceling lengthens mode 3 by the amount of dots the previous instruction took plus the residual dots left for the PPU to process. When OAM fetching is canceled, a pixel is rendered, and the fetcher is advanced one step. This advancement lengthens mode 3 by 1 dot if the current pixel is not 160. If the current pixel is 160 the PPU stops processing objects because they won’t be visible
