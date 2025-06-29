@@ -9,4 +9,3 @@ mod mmu;
 mod ppu;
 mod state;
 mod timer;
-pub mod ui;

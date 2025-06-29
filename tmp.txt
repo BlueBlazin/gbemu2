@@ -1,78 +1,42 @@
-Now let's finish off the remaining CPU instructions. The HALT and STOP instructions have notes from a different source so are different. More on HALT including the HALT bug is written at the end.
-Let's implement:
-```
-HALT: Halt system clock
-The exact behavior of this instruction depends on the state of the IME flag, and whether interrupts are pending
+Let's recap where we are at. We have:
+- A cycle accurate emulator
+- Using a custom driver and async-await
+- A pixel FIFO based cycle accurate PPU implementation (src/ppu.rs)
+- Missing APU and Joypad (that's fine we'll implement them later)
 
-- If the IME flag is set:
-    - The CPU enters low-power mode until after an interrupt is about to be serviced. The handler is executed normally, and the CPU resumes execution after the HALT when that returns.
-- If the IME flag is not set, and no interrupts are pending:
-    - As soon as an interrupt becomes pending, the CPU resumes execution. This is like the above, except that the handler is not called.
-- If the IME flag is not set, and some interrupt is pending:
-    - The CPU continues execution after the HALT, but the byte after it is read twice in a row (PC is not incremented, due to a hardware bug).
-Opcode: 0x76
-Cycles: -
-Flags: -
----
-STOP: Stop system and main clocks
-Stops the emulator.
-Opcode: 0x10
-Cycles: -
-Flags: -
----
-DI: Disable interrupts
-Disables interrupt handling by setting IME=0 and cancelling any scheduled effects of the EI
-instruction if any.
-Opcode 0b11110011/0xF3 Duration 1 machine cycle
-Length 1 byte: opcode Flags -
-Simple timing and pseudocode
-Mem R/W
-M-cycle
-opcode
-M1
-opcode = read_memory(addr=PC); PC = PC + 1
-if opcode == 0xF3:
- IME = 0
----
-EI: Enable interrupts
-Schedules interrupt handling to be enabled after the next machine cycle.
-Opcode 0b11111011/0xFB Duration 1 machine cycle
-Length 1 byte: opcode Flags -
-Simple timing and pseudocode
-Mem R/W
-M-cycle
-opcode
-M1
-opcode = read_memory(addr=PC); PC = PC + 1
-if opcode == 0xFB:
- IME_next = 1
----
-NOP: No operation
-No operation. This instruction doesn’t do anything, but can be used to add a delay of one
-machine cycle and increment PC by one.
-Opcode 0b00000000/0x00 Duration 1 machine cycle
-Length 1 byte: opcode Flags -
-Simple timing and pseudocode
-Mem R/W
-M-cycle
-opcode
-M1
-opcode = read_memory(addr=PC); PC = PC + 1
-if opcode == 0x00:
- # nothing
+Now we need to implement the actual UI for the emulator. Let's defer worrying about audio for when we implement the APU and keyboard input for when we add Joypad support. For now let's focus on displaying to the screen.
+
+Review of what we have and how we want it to work:
+
+Our `Driver` (src/driver.rs) has the following method:
+
+```rs
+pub enum Event {
+    VBlank,          // Frame complete, display framebuffer to screen
+    AudioBufferFull, // Audio buffer full, drain to audio system
+    MaxCycles,       // Reached cycle limit
+}
+
+pub struct ExecutionResult {
+    pub event: Event,
+    pub cycles_executed: usize,
+}
+
+pub fn run_for(&mut self, max_cycles: usize) -> ExecutionResult
 ```
 
-More on Halt
-- halt is an instruction that pauses the CPU. The CPU wakes up as soon as an interrupt is pending, that is, when the bitwise AND of IE and IF is non-zero
-- Most commonly, IME is set. In this case, the CPU simply wakes up, and before executing the instruction after the halt, the interrupt handler is called normally
-- If IME is not set, there are two distinct cases, depending on whether an interrupt is pending as the halt instruction is first executed
-    - If no interrupt is pending, halt executes as normal, and the CPU resumes regular execution as soon as an interrupt becomes pending. However, since IME=0, the interrupt is not handled.
-    - If an interrupt is pending, halt immediately exits, as expected, however the “halt bug”, explained below, is triggered.
+The main idea is that we want to run the emulator for the full MAX_CYCLES every 1/60 seconds.
+Since the gameboy runs at 4.194304 MHz frequency, we correctly have `MAX_CYCLES = 69905`.
 
-halt bug:
-- When a halt instruction is executed with IME = 0 and [IE] & [IF] != 0, the halt instruction ends immediately, but pc fails to be normally incremented
+In something like Javascript, we'd simply do this by using something like a `setTimeout` or `requestAnimationFrame`.
 
-Under most circumstances, this causes the byte after the halt to be read a second time (and this behaviour can repeat if said byte executes another halt instruction). But, if the halt is immediately followed by a jump to elsewhere, then the behaviour will be slightly different; this is possible in only one of two ways:
-- The halt comes immediately after a ei instruction (whose effect is typically delayed by one instruction, hence IME still being zero for the halt): the interrupt is serviced and the handler called, but the interrupt returns to the halt, which is executed again, and thus waits for another interrupt
-- The halt is immediately followed by a rst instruction: the rst instruction’s return address will point at the rst itself, instead of the byte after it. Notably, a ret would return to the rst an execute it again
-If the bugged halt is preceded by a ei and followed by a rst, the former “wins”
+The second main idea is that we want the components of the emulator to be able to trigger various events (NOT interrupts which may overlap with events but are separate).
+These events are basically used by the UI library (not the gameboy emulator code) to do stuff with the outside world.
+
+The most important perhaps is VBlank where we want to update/redraw the screen.
+Also, if an event happens, the `run_for` method is cut short. So it also returns the number of cycles executed.
+So we need to then rerun it for the remainder of the cycles. Once again, the goal is to run the emulator for MAX_CYCLES number of cycles in our 1/60 seconds interval for 60 FPS.
+
+We also have code to init the emulator in src/emulator.rs.
+
+I have added the sdl2 crate to the project. Let's use SDL2  to implement the UI.

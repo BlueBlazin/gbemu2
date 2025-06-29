@@ -2508,9 +2508,11 @@ async fn decode_and_execute(opcode: u8) {
         0x00 => execute_nop().await,  // NOP
         0x10 => execute_stop().await, // STOP
         _ => {
-            println!("Unimplemented instruction: 0x{:02X}", opcode);
-            // For now, just sleep to avoid infinite loop
-            sleep(4).await;
+            panic!(
+                "Unimplemented instruction: 0x{:02X} at PC: 0x{:04X}",
+                opcode,
+                with_state(|state| state.cpu.pc.wrapping_sub(1))
+            );
         }
     }
 }

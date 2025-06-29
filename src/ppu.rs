@@ -602,8 +602,9 @@ async fn execute_visible_scanline() {
 }
 
 async fn execute_vblank_scanline() {
-    // Update LYC=LY flag at start of scanline
+    // Reset dots and update LYC=LY flag at start of scanline
     with_state_mut(|state| {
+        state.ppu.dots = 0;
         state.ppu.update_lyc_ly_flag();
     });
 
@@ -631,8 +632,13 @@ async fn execute_vblank_scanline() {
         }
     }
 
-    // Wait for full scanline duration
-    sleep(DOTS_PER_SCANLINE as usize).await;
+    // Run dot-by-dot for proper cycle accuracy
+    while with_state(|state| state.ppu.dots < DOTS_PER_SCANLINE) {
+        sleep(1).await; // Sleep for 1 dot
+        with_state_mut(|state| {
+            state.ppu.dots = state.ppu.dots.saturating_add(1);
+        });
+    }
 }
 
 async fn execute_oam_scan() {
@@ -655,11 +661,14 @@ async fn execute_oam_scan() {
         state.ppu.selected_objects = selected_objects;
     });
 
-    // Wait for OAM scan duration and update dot counter
-    sleep(OAM_SCAN_DOTS as usize).await;
-    with_state_mut(|state| {
-        state.ppu.dots += OAM_SCAN_DOTS;
-    });
+    // Run dot-by-dot for OAM scan duration
+    let target_dots = with_state(|state| state.ppu.dots.saturating_add(OAM_SCAN_DOTS));
+    while with_state(|state| state.ppu.dots < target_dots) {
+        sleep(1).await; // Sleep for 1 dot
+        with_state_mut(|state| {
+            state.ppu.dots = state.ppu.dots.saturating_add(1);
+        });
+    }
 }
 
 async fn execute_drawing() {
@@ -668,16 +677,8 @@ async fn execute_drawing() {
 
     // Mode 3 doesn't trigger interrupts directly
 
-    // Calculate drawing duration based on penalties
-    let drawing_dots = calculate_drawing_duration().await;
-
-    // Render scanline (this will handle its own timing for FIFO operations)
+    // Render scanline (this will handle its own timing and dot counting)
     render_scanline().await;
-
-    // Update dot counter with the calculated drawing duration
-    with_state_mut(|state| {
-        state.ppu.dots += drawing_dots;
-    });
 }
 
 async fn execute_hblank() {
@@ -690,18 +691,21 @@ async fn execute_hblank() {
         crate::interrupts::request_lcd_interrupt();
     }
 
-    // Calculate remaining dots for HBlank
+    // Check if we've already exceeded the scanline duration (shouldn't happen)
     let current_dots = with_state(|state| state.ppu.dots);
-    let hblank_dots = DOTS_PER_SCANLINE - current_dots;
-
-    // Validate HBlank duration is within expected range
-    if !(HBLANK_MIN_DOTS..=HBLANK_MAX_DOTS).contains(&hblank_dots) {
-        // This would indicate a timing bug in the PPU implementation
-        // but we continue with the calculated value for robustness
+    if current_dots >= DOTS_PER_SCANLINE {
+        #[cfg(debug_assertions)]
+        println!("Warning: HBlank started with dots={} >= {}", current_dots, DOTS_PER_SCANLINE);
+        return;
     }
 
-    // Wait for HBlank duration
-    sleep(hblank_dots as usize).await;
+    // Run dot-by-dot for remaining scanline duration
+    while with_state(|state| state.ppu.dots < DOTS_PER_SCANLINE) {
+        sleep(1).await; // Sleep for 1 dot
+        with_state_mut(|state| {
+            state.ppu.dots = state.ppu.dots.saturating_add(1);
+        });
+    }
 }
 
 async fn scan_oam_for_objects() -> Vec<SelectedObject> {
@@ -888,10 +892,19 @@ async fn render_scanline_fifo() {
     apply_scx_penalty().await;
 
     // Main pixel rendering loop using FIFO
-    while with_state(|state| state.ppu.pixel_x < 160) {
+    while with_state(|state| state.ppu.pixel_x < 160 && state.ppu.dots < DOTS_PER_SCANLINE) {
         // Ensure we have enough pixels in background FIFO (at least 8)
+        let mut fetch_attempts = 0;
         while with_state(|state| state.ppu.bg_fifo.len() < 8) {
             step_fetcher().await;
+            fetch_attempts += 1;
+            
+            // Safety check: prevent infinite loop
+            if fetch_attempts > 100 {
+                #[cfg(debug_assertions)]
+                println!("Warning: Fetcher stuck at pixel_x={}", with_state(|state| state.ppu.pixel_x));
+                break;
+            }
         }
 
         // Check for window trigger
@@ -936,6 +949,9 @@ async fn apply_scx_penalty() {
     if scx_penalty > 0 {
         // Pause rendering for SCX % 8 dots and discard that many pixels
         sleep(scx_penalty as usize).await;
+        with_state_mut(|state| {
+            state.ppu.dots = state.ppu.dots.saturating_add(scx_penalty as u16);
+        });
 
         // Fill background FIFO with enough pixels to discard
         while with_state(|state| state.ppu.bg_fifo.len() < scx_penalty as usize) {
@@ -960,22 +976,37 @@ async fn step_fetcher() {
         FetcherStep::GetTile => {
             execute_get_tile().await;
             sleep(2).await; // Get Tile takes 2 dots
+            with_state_mut(|state| {
+                state.ppu.dots = state.ppu.dots.saturating_add(2);
+            });
         }
         FetcherStep::GetTileDataLow => {
             execute_get_tile_data_low().await;
             sleep(2).await; // Get Tile Data Low takes 2 dots
+            with_state_mut(|state| {
+                state.ppu.dots = state.ppu.dots.saturating_add(2);
+            });
         }
         FetcherStep::GetTileDataHigh => {
             execute_get_tile_data_high().await;
             sleep(2).await; // Get Tile Data High takes 2 dots
+            with_state_mut(|state| {
+                state.ppu.dots = state.ppu.dots.saturating_add(2);
+            });
         }
         FetcherStep::Sleep => {
             sleep(2).await; // Sleep takes 2 dots
+            with_state_mut(|state| {
+                state.ppu.dots = state.ppu.dots.saturating_add(2);
+            });
         }
         FetcherStep::Push => {
             // Push step is attempted every dot until it succeeds
             let success = execute_push().await;
             sleep(1).await; // Always takes at least 1 dot
+            with_state_mut(|state| {
+                state.ppu.dots = state.ppu.dots.saturating_add(1);
+            });
 
             if !success {
                 // Push failed, don't advance step
@@ -1123,6 +1154,9 @@ async fn check_window_trigger() {
 
         // 6-dot penalty for window
         sleep(6).await;
+        with_state_mut(|state| {
+            state.ppu.dots = state.ppu.dots.saturating_add(6);
+        });
     }
 }
 
@@ -1176,11 +1210,17 @@ async fn process_single_object(obj: &SelectedObject) {
     if obj_x == 0 && scx & 7 > 0 {
         let penalty = scx & 7;
         sleep(penalty as usize).await;
+        with_state_mut(|state| {
+            state.ppu.dots = state.ppu.dots.saturating_add(penalty as u16);
+        });
     }
 
     // Advance fetcher two steps with penalties
     step_fetcher().await; // First advancement (1 dot)
     sleep(3).await; // Second advancement (3 dots)
+    with_state_mut(|state| {
+        state.ppu.dots = state.ppu.dots.saturating_add(3);
+    });
 
     // Fetch object tile data
     let (tile_data_low, tile_data_high) = fetch_object_tile_data(obj, ly, obj_size).await;
@@ -1296,6 +1336,12 @@ async fn mix_object_pixels_into_fifo(
 }
 
 async fn render_pixel() {
+    // Each pixel output takes 1 dot
+    sleep(1).await;
+    with_state_mut(|state| {
+        state.ppu.dots = state.ppu.dots.saturating_add(1);
+    });
+    
     let bg_pixel = with_state_mut(|state| state.ppu.bg_fifo.pop());
     let obj_pixel = with_state_mut(|state| state.ppu.obj_fifo.pop());
 
