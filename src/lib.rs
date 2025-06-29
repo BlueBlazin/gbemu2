@@ -1,7 +1,7 @@
 pub mod cartridge;
 mod cpu;
 mod dma;
-mod driver;
+pub mod driver;
 pub mod emulator;
 mod interrupts;
 mod io;
