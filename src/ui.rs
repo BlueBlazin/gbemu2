@@ -87,6 +87,7 @@ fn update_display(pixels: &mut Pixels) {
     with_state(|state| {
         let framebuffer = &state.ppu.framebuffer;
 
+
         // Convert Game Boy 2-bit colors to RGBA
         for (i, pixel) in frame.chunks_exact_mut(4).enumerate() {
             let y = i / SCREEN_WIDTH as usize;
