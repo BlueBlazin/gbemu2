@@ -373,15 +373,9 @@ pub const WX_REGISTER: u16 = 0xFF4B; // Window X Position
 const DOTS_PER_SCANLINE: u16 = 456;
 const SCANLINES_PER_FRAME: u8 = 154;
 const VISIBLE_SCANLINES: u8 = 144;
-const VBLANK_SCANLINES: u8 = 10;
 
 // Mode timings
 const OAM_SCAN_DOTS: u16 = 80;
-const DRAWING_MIN_DOTS: u16 = 172;
-const DRAWING_MAX_DOTS: u16 = 289;
-const HBLANK_MIN_DOTS: u16 = 87;
-const HBLANK_MAX_DOTS: u16 = 204;
-const VBLANK_DOTS: u16 = 4560;
 
 // PPU Modes
 const MODE_HBLANK: u8 = 0;
@@ -415,14 +409,6 @@ impl FifoPixel {
             bg_priority,
         }
     }
-
-    fn transparent() -> Self {
-        Self {
-            color: 0,
-            palette: false,
-            bg_priority: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -451,22 +437,12 @@ impl PixelFifo {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.pixels.is_empty()
-    }
-
     fn len(&self) -> usize {
         self.pixels.len()
     }
 
     fn clear(&mut self) {
         self.pixels.clear();
-    }
-
-    fn fill_with_transparent(&mut self, count: usize) {
-        for _ in 0..count.min(16 - self.pixels.len()) {
-            self.pixels.push(FifoPixel::transparent());
-        }
     }
 }
 
@@ -708,20 +684,6 @@ async fn scan_oam_for_objects() -> Vec<SelectedObject> {
     // No sorting - objects are selected in OAM order (first 10 matching)
     // Drawing priority is handled differently during rendering
     selected_objects
-}
-
-async fn calculate_drawing_duration() -> u16 {
-    let mut dots = DRAWING_MIN_DOTS;
-
-    // Penalty 1: Background scrolling (SCX % 8 dots)
-    let scx_penalty = with_state(|state| (state.ppu.scx % 8) as u16);
-    dots += scx_penalty;
-
-    // TODO: Penalty 2: Window rendering (6 dots when window starts)
-    // TODO: Penalty 3: Object rendering (6-11 dots per object)
-
-    // Ensure we don't exceed maximum
-    dots.min(DRAWING_MAX_DOTS)
 }
 
 async fn render_scanline() {
@@ -1024,25 +986,10 @@ async fn fetcher_vram_read(address: u16) -> u8 {
     })
 }
 
-async fn ppu_oam_read(address: u16) -> u8 {
-    sleep(4).await; // OAM access takes 4 cycles  
-    with_state(|state| {
-        let dma_active = state.dma.is_bus_restricted();
-        state.mmu.read(address, dma_active, &state.ppu)
-    })
-}
-
 // Helper function to check if PPU can access memory
 fn can_access_vram() -> bool {
     with_state(|state| {
         let mode = state.ppu.ppu_mode;
         mode != MODE_DRAWING // VRAM accessible in modes 0, 1, 2 but not 3
-    })
-}
-
-fn can_access_oam() -> bool {
-    with_state(|state| {
-        let mode = state.ppu.ppu_mode;
-        mode == MODE_HBLANK || mode == MODE_VBLANK // OAM accessible in modes 0, 1 only
     })
 }
