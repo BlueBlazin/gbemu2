@@ -2199,9 +2199,6 @@ async fn execute_ret() {
         state.cpu.sp = sp;
         state.cpu.pc = pc;
     });
-
-    // Enable interrupts (RETI specific behavior)
-    interrupts::execute_reti();
 }
 
 async fn execute_ret_cc(opcode: u8) {
