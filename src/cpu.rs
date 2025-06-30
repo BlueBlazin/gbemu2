@@ -1145,10 +1145,8 @@ async fn execute_cpl() {
     // Complement accumulator, set N and H flags
     with_state_mut(|state| {
         state.cpu.a = !state.cpu.a;
-        let current_z = state.cpu.flag_z();
-        let current_c = state.cpu.flag_c();
-        // Set N and H flags, preserve Z and C
-        state.cpu.set_flags(current_z, true, true, current_c);
+        state.cpu.set_flag_n(true);
+        state.cpu.set_flag_h(true);
     });
 }
 
