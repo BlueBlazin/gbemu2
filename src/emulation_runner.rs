@@ -47,7 +47,6 @@ impl EmulationRunner {
         let mut screenshot_taken = false;
 
         println!("Emulator started. Press ESC to quit.");
-        println!("Note: CPU implementation is incomplete, so execution may be limited.");
 
         // Initial render to show boot state
         self.renderer.render_frame()?;
