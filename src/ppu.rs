@@ -799,12 +799,7 @@ async fn execute_get_tile() {
     let tile_addr = tile_map_base + ((tile_y as u16 / 8) * 32) + (tile_x as u16);
 
     // Read tile index (1 dot)
-    let tile_index = if can_access_vram() {
-        fetcher_vram_read(tile_addr).await
-    } else {
-        sleep(1).await; // Still consume 1 dot even if access is blocked
-        0xFF
-    };
+    let tile_index = fetcher_vram_read(tile_addr).await;
 
     with_state_mut(|state| {
         state.ppu.fetcher.tile_index = tile_index;
@@ -821,12 +816,7 @@ async fn execute_get_tile_data_low() {
     let tile_line = tile_y % 8;
     let data_addr = tile_addr + (tile_line as u16 * 2);
 
-    let tile_data_low = if can_access_vram() {
-        fetcher_vram_read(data_addr).await
-    } else {
-        sleep(1).await; // Still consume 1 dot even if access is blocked
-        0xFF
-    };
+    let tile_data_low = fetcher_vram_read(data_addr).await;
 
     with_state_mut(|state| state.ppu.fetcher.tile_data_low = tile_data_low);
 }
@@ -839,12 +829,7 @@ async fn execute_get_tile_data_high() {
     let tile_line = tile_y % 8;
     let data_addr = tile_addr + (tile_line as u16 * 2) + 1;
 
-    let tile_data_high = if can_access_vram() {
-        fetcher_vram_read(data_addr).await
-    } else {
-        sleep(1).await; // Still consume 1 dot even if access is blocked
-        0xFF
-    };
+    let tile_data_high = fetcher_vram_read(data_addr).await;
 
     with_state_mut(|state| state.ppu.fetcher.tile_data_high = tile_data_high);
 
@@ -983,13 +968,5 @@ async fn fetcher_vram_read(address: u16) -> u8 {
     with_state(|state| {
         let dma_active = state.dma.is_bus_restricted();
         state.mmu.read(address, dma_active, &state.ppu)
-    })
-}
-
-// Helper function to check if PPU can access memory
-fn can_access_vram() -> bool {
-    with_state(|state| {
-        let mode = state.ppu.ppu_mode;
-        mode != MODE_DRAWING // VRAM accessible in modes 0, 1, 2 but not 3
     })
 }
