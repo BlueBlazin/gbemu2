@@ -36,6 +36,7 @@ impl DmaState {
         self.delay_cycles = 2; // 2 M-cycle delay before transfer starts
     }
 
+    #[inline(always)]
     pub fn is_bus_restricted(&self) -> bool {
         self.active
     }

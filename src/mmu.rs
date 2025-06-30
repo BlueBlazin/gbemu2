@@ -75,21 +75,7 @@ impl MMU {
                     // Mode 3 (Drawing) - VRAM not accessible
                     0xFF
                 } else {
-                    let vram_addr = (address & 0x1FFF) as usize;
-                    if vram_addr < 0x1800 {
-                        // Tile data area (0x8000-0x97FF)
-                        let tile_index = vram_addr / 16;
-                        let byte_in_tile = vram_addr % 16;
-                        ppu.vram[tile_index][byte_in_tile]
-                    } else {
-                        // Tile map areas (0x9800-0x9FFF)
-                        let map_addr = vram_addr - 0x1800;
-                        if map_addr < 0x400 {
-                            ppu.bg_tile_map_0[map_addr]
-                        } else {
-                            ppu.bg_tile_map_1[map_addr - 0x400]
-                        }
-                    }
+                    self.read_vram(address, ppu)
                 }
             }
 
@@ -111,19 +97,7 @@ impl MMU {
                     0xFF
                 } else {
                     // Mode 0 (HBlank) or Mode 1 (VBlank) - OAM accessible
-                    let oam_index = ((address - 0xFE00) / 4) as usize;
-                    let byte_offset = (address - 0xFE00) % 4;
-                    if oam_index < 40 {
-                        match byte_offset {
-                            0 => ppu.oam[oam_index].y,
-                            1 => ppu.oam[oam_index].x,
-                            2 => ppu.oam[oam_index].tile_index,
-                            3 => ppu.oam[oam_index].attributes,
-                            _ => 0xFF,
-                        }
-                    } else {
-                        0xFF
-                    }
+                    self.read_oam(address, ppu)
                 }
             }
 
@@ -142,6 +116,41 @@ impl MMU {
 
             // Interrupt Enable Register (0xFFFF)
             0xFFFF => self.ie_register,
+        }
+    }
+
+    pub fn read_vram(&self, address: u16, ppu: &PpuState) -> u8 {
+        let vram_addr = (address & 0x1FFF) as usize;
+        if vram_addr < 0x1800 {
+            // Tile data area (0x8000-0x97FF)
+            let tile_index = vram_addr / 16;
+            let byte_in_tile = vram_addr % 16;
+            ppu.vram[tile_index][byte_in_tile]
+        } else {
+            // Tile map areas (0x9800-0x9FFF)
+            let map_addr = vram_addr - 0x1800;
+            if map_addr < 0x400 {
+                ppu.bg_tile_map_0[map_addr]
+            } else {
+                ppu.bg_tile_map_1[map_addr - 0x400]
+            }
+        }
+    }
+
+    pub fn read_oam(&self, address: u16, ppu: &PpuState) -> u8 {
+        // Mode 0 (HBlank) or Mode 1 (VBlank) - OAM accessible
+        let oam_index = ((address - 0xFE00) / 4) as usize;
+        let byte_offset = (address - 0xFE00) % 4;
+        if oam_index < 40 {
+            match byte_offset {
+                0 => ppu.oam[oam_index].y,
+                1 => ppu.oam[oam_index].x,
+                2 => ppu.oam[oam_index].tile_index,
+                3 => ppu.oam[oam_index].attributes,
+                _ => 0xFF,
+            }
+        } else {
+            0xFF
         }
     }
 

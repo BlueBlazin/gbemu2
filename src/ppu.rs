@@ -965,8 +965,11 @@ async fn render_pixel() {
 // Fetcher VRAM read (1 cycle) - used within 2-dot fetcher steps
 async fn fetcher_vram_read(address: u16) -> u8 {
     let value = with_state(|state| {
-        let dma_active = state.dma.is_bus_restricted();
-        state.mmu.read(address, dma_active, &state.ppu)
+        if state.dma.is_bus_restricted() {
+            0xFF
+        } else {
+            state.mmu.read_vram(address, &state.ppu)
+        }
     });
 
     sleep(1).await; // Fetcher VRAM access takes 1 dot
