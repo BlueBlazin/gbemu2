@@ -774,16 +774,16 @@ async fn step_fetcher() {
 
     match step {
         FetcherStep::GetTile => {
-            execute_get_tile().await;
-            sleep(2).await; // Get Tile takes 2 dots
+            execute_get_tile().await; // Includes 1 dot for VRAM read
+            sleep(1).await; // 1 more dot for processing = 2 dots total
         }
         FetcherStep::GetTileDataLow => {
-            execute_get_tile_data_low().await;
-            sleep(2).await; // Get Tile Data Low takes 2 dots
+            execute_get_tile_data_low().await; // Includes 1 dot for VRAM read
+            sleep(1).await; // 1 more dot for processing = 2 dots total
         }
         FetcherStep::GetTileDataHigh => {
-            execute_get_tile_data_high().await;
-            sleep(2).await; // Get Tile Data High takes 2 dots
+            execute_get_tile_data_high().await; // Includes 1 dot for VRAM read
+            sleep(1).await; // 1 more dot for processing = 2 dots total
         }
         FetcherStep::Sleep => {
             sleep(2).await; // Sleep takes 2 dots
@@ -836,10 +836,11 @@ async fn execute_get_tile() {
     // Calculate tile address
     let tile_addr = tile_map_base + ((tile_y as u16 / 8) * 32) + (tile_x as u16);
 
-    // Read tile index
+    // Read tile index (1 dot)
     let tile_index = if can_access_vram() {
-        ppu_vram_read(tile_addr).await
+        fetcher_vram_read(tile_addr).await
     } else {
+        sleep(1).await; // Still consume 1 dot even if access is blocked
         0xFF
     };
 
@@ -859,8 +860,9 @@ async fn execute_get_tile_data_low() {
     let data_addr = tile_addr + (tile_line as u16 * 2);
 
     let tile_data_low = if can_access_vram() {
-        ppu_vram_read(data_addr).await
+        fetcher_vram_read(data_addr).await
     } else {
+        sleep(1).await; // Still consume 1 dot even if access is blocked
         0xFF
     };
 
@@ -876,8 +878,9 @@ async fn execute_get_tile_data_high() {
     let data_addr = tile_addr + (tile_line as u16 * 2) + 1;
 
     let tile_data_high = if can_access_vram() {
-        ppu_vram_read(data_addr).await
+        fetcher_vram_read(data_addr).await
     } else {
+        sleep(1).await; // Still consume 1 dot even if access is blocked
         0xFF
     };
 
@@ -1012,9 +1015,9 @@ async fn render_pixel() {
     });
 }
 
-// Memory access functions for PPU (similar to CPU pattern)
-async fn ppu_vram_read(address: u16) -> u8 {
-    sleep(4).await; // VRAM access takes 4 cycles
+// Fetcher VRAM read (1 cycle) - used within 2-dot fetcher steps
+async fn fetcher_vram_read(address: u16) -> u8 {
+    sleep(1).await; // Fetcher VRAM access takes 1 dot
     with_state(|state| {
         let dma_active = state.dma.is_bus_restricted();
         state.mmu.read(address, dma_active, &state.ppu)
