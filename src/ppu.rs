@@ -595,9 +595,6 @@ async fn execute_visible_scanline() {
 }
 
 async fn execute_vblank_scanline() {
-    // Wait for full scanline duration
-    sleep(DOTS_PER_SCANLINE as usize).await;
-
     // Check if this is the first VBlank scanline
     let is_first_vblank = with_state(|state| state.ppu.ly == VISIBLE_SCANLINES);
 
@@ -620,6 +617,9 @@ async fn execute_vblank_scanline() {
     if should_trigger_stat {
         request_lcd_interrupt();
     }
+
+    // Wait for full scanline duration
+    sleep(DOTS_PER_SCANLINE as usize).await;
 }
 
 async fn execute_oam_scan() {
