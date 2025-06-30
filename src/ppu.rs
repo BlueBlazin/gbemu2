@@ -109,10 +109,9 @@ pub struct PpuState {
     pub framebuffer: [[u8; 160]; 144],
 
     // Internal PPU state
-    pub ppu_mode: u8,         // Current PPU mode (0-3)
-    pub dots: u16,            // Current dot/cycle within scanline
-    pub window_line: u8,      // Internal window line counter
-    pub frame_complete: bool, // Flag for frame completion
+    pub ppu_mode: u8,    // Current PPU mode (0-3)
+    pub dots: u16,       // Current dot/cycle within scanline
+    pub window_line: u8, // Internal window line counter
 
     // Pixel FIFO state (not public, managed internally)
     bg_fifo: PixelFifo,
@@ -145,7 +144,6 @@ impl PpuState {
             ppu_mode: 2,                  // Start in mode 2 (OAM scan)
             dots: 0,
             window_line: 0,
-            frame_complete: false,
             bg_fifo: PixelFifo::new(),
             obj_fifo: PixelFifo::new(),
             fetcher: PixelFetcher::new(),
@@ -541,7 +539,6 @@ async fn execute_frame() {
     with_state_mut(|state| {
         state.ppu.ly = 0;
         state.ppu.dots = 0;
-        state.ppu.frame_complete = false;
         state.ppu.window_line = 0;
     });
 
@@ -574,9 +571,6 @@ async fn execute_frame() {
 
         execute_vblank_scanline().await;
     }
-
-    // Mark frame as complete
-    with_state_mut(|state| state.ppu.frame_complete = true);
 }
 
 async fn execute_visible_scanline() {
@@ -658,15 +652,8 @@ async fn execute_drawing() {
         // Note: No STAT interrupt is triggered for Mode 3
     });
 
-    // Calculate drawing duration based on penalties
-    let drawing_dots = calculate_drawing_duration().await;
-
     // Initialize pixel FIFO and render scanline
     render_scanline().await;
-
-    // Wait for drawing duration and update dots
-    sleep(drawing_dots as usize).await;
-    with_state_mut(|state| state.ppu.dots += drawing_dots);
 }
 
 async fn execute_hblank() {

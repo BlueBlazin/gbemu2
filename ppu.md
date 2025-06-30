@@ -236,7 +236,7 @@ While PPU is accessing video-related memory, that memory is inaccessible to CPU 
 #### Mode 3 length
 
 - During Mode 3, by default the PPU outputs one pixel to the screen per dot, from left to right; the screen is 160 pixels wide, so the minimum Mode 3 length is 160 + 12 = 172 dots.
-- Game Boy does not always output pixels steadily. ome features cause the rendering process to stall for a couple dots
+- Game Boy does not always output pixels steadily. Some features cause the rendering process to stall for a couple dots
 - Any extra time spent stalling lengthens Mode 3; but since scanlines last for a fixed number of dots, Mode 0 is therefore shortened by that same amount of time
 
 Three things can cause Mode 3 “penalties”:
