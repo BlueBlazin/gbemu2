@@ -69,19 +69,26 @@ impl MMU {
 
             // Video RAM (0x8000-0x9FFF) - delegated to PPU
             0x8000..=0x9FFF => {
-                let vram_addr = (address & 0x1FFF) as usize;
-                if vram_addr < 0x1800 {
-                    // Tile data area (0x8000-0x97FF)
-                    let tile_index = vram_addr / 16;
-                    let byte_in_tile = vram_addr % 16;
-                    ppu.vram[tile_index][byte_in_tile]
+                // Check if VRAM is accessible based on PPU mode
+                let mode = ppu.ppu_mode;
+                if mode == 3 {
+                    // Mode 3 (Drawing) - VRAM not accessible
+                    0xFF
                 } else {
-                    // Tile map areas (0x9800-0x9FFF)
-                    let map_addr = vram_addr - 0x1800;
-                    if map_addr < 0x400 {
-                        ppu.bg_tile_map_0[map_addr]
+                    let vram_addr = (address & 0x1FFF) as usize;
+                    if vram_addr < 0x1800 {
+                        // Tile data area (0x8000-0x97FF)
+                        let tile_index = vram_addr / 16;
+                        let byte_in_tile = vram_addr % 16;
+                        ppu.vram[tile_index][byte_in_tile]
                     } else {
-                        ppu.bg_tile_map_1[map_addr - 0x400]
+                        // Tile map areas (0x9800-0x9FFF)
+                        let map_addr = vram_addr - 0x1800;
+                        if map_addr < 0x400 {
+                            ppu.bg_tile_map_0[map_addr]
+                        } else {
+                            ppu.bg_tile_map_1[map_addr - 0x400]
+                        }
                     }
                 }
             }
@@ -99,8 +106,11 @@ impl MMU {
             0xFE00..=0xFE9F => {
                 // Check if OAM is accessible based on PPU mode
                 let mode = ppu.ppu_mode;
-                if mode == 0 || mode == 1 {
-                    // MODE_HBLANK or MODE_VBLANK
+                if mode == 2 || mode == 3 {
+                    // Mode 2 (OAM Scan) or Mode 3 (Drawing) - OAM not accessible
+                    0xFF
+                } else {
+                    // Mode 0 (HBlank) or Mode 1 (VBlank) - OAM accessible
                     let oam_index = ((address - 0xFE00) / 4) as usize;
                     let byte_offset = (address - 0xFE00) % 4;
                     if oam_index < 40 {
@@ -114,8 +124,6 @@ impl MMU {
                     } else {
                         0xFF
                     }
-                } else {
-                    0xFF // OAM not accessible during certain PPU modes
                 }
             }
 
@@ -165,21 +173,27 @@ impl MMU {
 
             // Video RAM (0x8000-0x9FFF) - delegated to PPU
             0x8000..=0x9FFF => {
-                let vram_addr = (address & 0x1FFF) as usize;
-                if vram_addr < 0x1800 {
-                    // Tile data area (0x8000-0x97FF)
-                    let tile_index = vram_addr / 16;
-                    let byte_in_tile = vram_addr % 16;
-                    ppu.vram[tile_index][byte_in_tile] = value;
-                } else {
-                    // Tile map areas (0x9800-0x9FFF)
-                    let map_addr = vram_addr - 0x1800;
-                    if map_addr < 0x400 {
-                        ppu.bg_tile_map_0[map_addr] = value;
+                // Check if VRAM is accessible based on PPU mode
+                let mode = ppu.ppu_mode;
+                if mode != 3 {
+                    // VRAM accessible in modes 0, 1, 2 but not mode 3
+                    let vram_addr = (address & 0x1FFF) as usize;
+                    if vram_addr < 0x1800 {
+                        // Tile data area (0x8000-0x97FF)
+                        let tile_index = vram_addr / 16;
+                        let byte_in_tile = vram_addr % 16;
+                        ppu.vram[tile_index][byte_in_tile] = value;
                     } else {
-                        ppu.bg_tile_map_1[map_addr - 0x400] = value;
+                        // Tile map areas (0x9800-0x9FFF)
+                        let map_addr = vram_addr - 0x1800;
+                        if map_addr < 0x400 {
+                            ppu.bg_tile_map_0[map_addr] = value;
+                        } else {
+                            ppu.bg_tile_map_1[map_addr - 0x400] = value;
+                        }
                     }
                 }
+                // Writes are ignored when VRAM is not accessible
             }
 
             // Work RAM (0xC000-0xDFFF)
@@ -195,10 +209,10 @@ impl MMU {
 
             // Object Attribute Memory (0xFE00-0xFE9F) - delegated to PPU with access restrictions
             0xFE00..=0xFE9F => {
-                // Only allow OAM writes when PPU allows access
+                // Check if OAM is accessible based on PPU mode
                 let mode = ppu.ppu_mode;
-                if mode == 0 || mode == 1 {
-                    // MODE_HBLANK or MODE_VBLANK
+                if mode != 2 && mode != 3 {
+                    // OAM accessible in modes 0, 1 but not modes 2, 3
                     let oam_index = ((address - 0xFE00) / 4) as usize;
                     let byte_offset = (address - 0xFE00) % 4;
                     if oam_index < 40 {

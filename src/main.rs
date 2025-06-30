@@ -83,12 +83,15 @@ fn main() -> Result<(), String> {
 
     // Check if cartridge type is supported
     match cartridge_info.cartridge_type {
-        gbemu2::cartridge::CartridgeType::RomOnly => {
+        gbemu2::cartridge::CartridgeType::RomOnly
+        | gbemu2::cartridge::CartridgeType::Mbc1
+        | gbemu2::cartridge::CartridgeType::Mbc1Ram
+        | gbemu2::cartridge::CartridgeType::Mbc1RamBattery => {
             println!("Starting emulation...");
         }
         unsupported => {
             eprintln!("Unsupported cartridge type: {:?}", unsupported);
-            eprintln!("Currently only ROM-only cartridges (MBC0) are supported.");
+            eprintln!("Currently only ROM-only (MBC0) and MBC1 cartridges are supported.");
             std::process::exit(1);
         }
     }
@@ -158,14 +161,14 @@ fn main() -> Result<(), String> {
         // Run emulator until we get a VBlank event
         let mut vblank_occurred = false;
         let mut frame_cycles = 0usize;
-        
+
         // Keep running until we get a VBlank
         while !vblank_occurred {
             // Run for a batch of cycles
             let result = driver.run_for(10000); // Run for 10k cycles at a time
             frame_cycles += result.cycles_executed;
             total_cycles += result.cycles_executed;
-            
+
             match result.event {
                 Event::VBlank => {
                     // Render the frame
@@ -181,11 +184,14 @@ fn main() -> Result<(), String> {
                     // Continue running
                 }
             }
-            
+
             // Safety check: if no cycles were executed, something is wrong
             if result.cycles_executed == 0 {
                 println!("Warning: No cycles executed. Emulator may be stuck.");
-                println!("Debug: frame_cycles = {}, total_cycles = {}", frame_cycles, total_cycles);
+                println!(
+                    "Debug: frame_cycles = {}, total_cycles = {}",
+                    frame_cycles, total_cycles
+                );
                 // Try to render current state
                 render_frame(&mut texture, &mut canvas, args.scale)?;
                 // Give it one more chance with a smaller batch
@@ -195,10 +201,13 @@ fn main() -> Result<(), String> {
                     break 'running;
                 }
             }
-            
+
             // Additional safety: if we've run way too many cycles without VBlank, something is wrong
             if frame_cycles > CYCLES_PER_FRAME * 2 {
-                println!("Warning: Ran {} cycles without VBlank (expected ~{})", frame_cycles, CYCLES_PER_FRAME);
+                println!(
+                    "Warning: Ran {} cycles without VBlank (expected ~{})",
+                    frame_cycles, CYCLES_PER_FRAME
+                );
                 render_frame(&mut texture, &mut canvas, args.scale)?;
                 break; // Exit inner loop to maintain frame timing
             }
@@ -214,18 +223,23 @@ fn main() -> Result<(), String> {
         let now = Instant::now();
         if now.duration_since(last_fps_time) >= Duration::from_secs(1) {
             let fps = fps_frame_count as f64;
-            println!("FPS: {:.1}, Total frames: {}, Total cycles: {}", fps, frame_count, total_cycles);
+            println!(
+                "FPS: {:.1}, Total frames: {}, Total cycles: {}",
+                fps, frame_count, total_cycles
+            );
             last_fps_time = now;
             fps_frame_count = 0;
         }
-        
+
         // Debug output every few seconds
         if now.duration_since(last_debug_time) >= Duration::from_secs(5) {
-            println!("Debug: Frame cycles: {}, VBlank: {}", frame_cycles, vblank_occurred);
+            println!(
+                "Debug: Frame cycles: {}, VBlank: {}",
+                frame_cycles, vblank_occurred
+            );
             // Print PPU state
-            let (ly, mode, lcdc) = with_state(|state| {
-                (state.ppu.ly, state.ppu.ppu_mode, state.ppu.lcdc)
-            });
+            let (ly, mode, lcdc) =
+                with_state(|state| (state.ppu.ly, state.ppu.ppu_mode, state.ppu.lcdc));
             println!("Debug: PPU LY={}, Mode={}, LCDC=0x{:02X}", ly, mode, lcdc);
             last_debug_time = now;
         }

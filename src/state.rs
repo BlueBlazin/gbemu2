@@ -28,7 +28,7 @@ impl CpuState {
     pub fn new() -> Self {
         Self {
             a: 0x01,    // A = $01
-            f: 0x80,    // F = Z=1 N=0 H=0 C=0 (Z flag set, others clear)
+            f: 0xB0,    // F = Z=1 N=0 H=0 C=0 (Z flag set, others clear)
             b: 0x00,    // B = $00
             c: 0x13,    // C = $13
             d: 0x00,    // D = $00
@@ -211,6 +211,18 @@ impl EmulatorState {
                 crate::timer::read_timer_register_direct(address, &self.timer)
             }
             crate::io::DMA_REGISTER => (self.dma.source_address >> 8) as u8,
+            // PPU registers
+            crate::ppu::LCDC_REGISTER => self.ppu.lcdc,
+            crate::ppu::STAT_REGISTER => self.ppu.stat | 0x80, // Bit 7 always reads as 1
+            crate::ppu::SCY_REGISTER => self.ppu.scy,
+            crate::ppu::SCX_REGISTER => self.ppu.scx,
+            crate::ppu::LY_REGISTER => self.ppu.ly,
+            crate::ppu::LYC_REGISTER => self.ppu.lyc,
+            crate::ppu::BGP_REGISTER => self.ppu.bgp,
+            crate::ppu::OBP0_REGISTER => self.ppu.obp0,
+            crate::ppu::OBP1_REGISTER => self.ppu.obp1,
+            crate::ppu::WY_REGISTER => self.ppu.wy,
+            crate::ppu::WX_REGISTER => self.ppu.wx,
             _ => self.mmu.io_registers[(address - 0xFF00) as usize],
         }
     }
@@ -226,6 +238,29 @@ impl EmulatorState {
                 crate::timer::write_timer_register_direct(address, value, &mut self.timer);
             }
             crate::io::DMA_REGISTER => self.dma.request_transfer(value),
+            // PPU registers
+            crate::ppu::LCDC_REGISTER => self.ppu.lcdc = value,
+            crate::ppu::STAT_REGISTER => {
+                // Only bits 3-6 are writable
+                self.ppu.stat = (self.ppu.stat & 0x87) | (value & 0x78);
+            }
+            crate::ppu::SCY_REGISTER => self.ppu.scy = value,
+            crate::ppu::SCX_REGISTER => self.ppu.scx = value,
+            crate::ppu::LY_REGISTER => {} // LY is read-only
+            crate::ppu::LYC_REGISTER => {
+                self.ppu.lyc = value;
+                self.ppu.update_lyc_ly_flag();
+                // Check for STAT interrupt
+                if self.ppu.lyc_int_select() && self.ppu.lyc_equals_ly() {
+                    self.interrupts
+                        .request_interrupt(crate::interrupts::InterruptType::Lcd);
+                }
+            }
+            crate::ppu::BGP_REGISTER => self.ppu.bgp = value,
+            crate::ppu::OBP0_REGISTER => self.ppu.obp0 = value,
+            crate::ppu::OBP1_REGISTER => self.ppu.obp1 = value,
+            crate::ppu::WY_REGISTER => self.ppu.wy = value,
+            crate::ppu::WX_REGISTER => self.ppu.wx = value,
             _ => {
                 if address >= 0xFF00 && address <= 0xFF7F {
                     self.mmu.io_registers[(address - 0xFF00) as usize] = value;

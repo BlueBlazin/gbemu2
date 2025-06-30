@@ -98,13 +98,15 @@ impl TimerState {
     }
 
     // Process pending timer overflow
-    pub fn process_timer_overflow(&mut self) {
+    // Returns true if a timer interrupt should be requested
+    pub fn process_timer_overflow(&mut self) -> bool {
         if self.overflow_pending {
             self.tima = self.tma;
             self.overflow_pending = false;
-            // Request timer interrupt through our helper function
-            request_timer_interrupt();
+            // Signal that a timer interrupt should be requested
+            return true;
         }
+        false
     }
 
     // Write to DIV register (resets system counter)
@@ -217,9 +219,14 @@ async fn step_timer() {
     }
 
     // First, process any pending timer overflow from previous cycle
-    with_state_mut(|state| {
-        state.timer.process_timer_overflow();
+    let should_interrupt = with_state_mut(|state| {
+        state.timer.process_timer_overflow()
     });
+    
+    // Request timer interrupt if needed (outside the borrow context)
+    if should_interrupt {
+        request_timer_interrupt();
+    }
 
     // Get current timer bit state before incrementing
     let old_timer_bit = with_state(|state| state.timer.is_timer_bit_set());

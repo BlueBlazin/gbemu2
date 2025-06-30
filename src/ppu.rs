@@ -6,12 +6,6 @@ pub struct OamEntry {
     pub attributes: u8, // Attributes/flags
 }
 
-impl Default for OamEntry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl OamEntry {
     pub fn new() -> Self {
         Self {
@@ -103,10 +97,13 @@ pub struct PpuState {
     // OAM - 40 objects, 4 bytes each
     pub oam: [OamEntry; 40],
 
-    // VRAM - Video RAM (0x8000-0x97FF: tiles, 0x9800-0x9FFF: tile maps)
-    pub vram: [[u8; 16]; 384], // 384 tiles, 16 bytes each (8x8 pixels, 2 bits per pixel)
-    pub bg_tile_map_0: [u8; 0x400], // Background tile map 0 (0x9800-0x9BFF)
-    pub bg_tile_map_1: [u8; 0x400], // Background tile map 1 (0x9C00-0x9FFF)
+    // VRAM - Video RAM storage
+    // Tile data: 384 tiles, 16 bytes each
+    pub vram: [[u8; 16]; 384],
+
+    // Background tile maps
+    pub bg_tile_map_0: [u8; 0x400], // 32x32 tiles at 0x9800-0x9BFF
+    pub bg_tile_map_1: [u8; 0x400], // 32x32 tiles at 0x9C00-0x9FFF
 
     // LCD framebuffer - 160x144 pixels, 4 colors (0-3)
     pub framebuffer: [[u8; 160]; 144],
@@ -121,16 +118,9 @@ pub struct PpuState {
     bg_fifo: PixelFifo,
     obj_fifo: PixelFifo,
     fetcher: PixelFetcher,
-    pixel_x: u8,                           // Current pixel X position (0-159)
-    window_triggered: bool,                // Whether window has been triggered this scanline
-    scx_penalty_applied: bool,             // Whether SCX penalty has been applied
-    selected_objects: Vec<SelectedObject>, // Objects selected during OAM scan for current scanline
-}
-
-impl Default for PpuState {
-    fn default() -> Self {
-        Self::new()
-    }
+    pixel_x: u8,               // Current pixel X position (0-159)
+    window_triggered: bool,    // Whether window has been triggered this scanline
+    scx_penalty_applied: bool, // Whether SCX penalty has been applied
 }
 
 impl PpuState {
@@ -144,13 +134,13 @@ impl PpuState {
             lyc: 0,
             wy: 0,
             wx: 0,
-            bgp: 0xFC,  // BGP = $FC (boot value)
-            obp0: 0x00, // OBP0 not specified in boot values, so default to $00
-            obp1: 0x00, // OBP1 not specified in boot values, so default to $00
+            bgp: 0xFC,  // Default background palette
+            obp0: 0xFF, // Default object palette 0
+            obp1: 0xFF, // Default object palette 1
             oam: [OamEntry::new(); 40],
-            vram: [[0; 16]; 384],         // Initialize VRAM tiles
-            bg_tile_map_0: [0; 0x400],    // Initialize background tile map 0
-            bg_tile_map_1: [0; 0x400],    // Initialize background tile map 1
+            vram: [[0; 16]; 384],         // Initialize VRAM to 0
+            bg_tile_map_0: [0; 0x400],    // Initialize tile map 0 to 0
+            bg_tile_map_1: [0; 0x400],    // Initialize tile map 1 to 0
             framebuffer: [[0; 160]; 144], // Initialize to color 0 (white)
             ppu_mode: 2,                  // Start in mode 2 (OAM scan)
             dots: 0,
@@ -162,7 +152,6 @@ impl PpuState {
             pixel_x: 0,
             window_triggered: false,
             scx_penalty_applied: false,
-            selected_objects: Vec::new(),
         }
     }
 
@@ -250,6 +239,22 @@ impl PpuState {
         self.stat = (self.stat & 0xFC) | (mode & 0x03);
     }
 
+    // Check if STAT interrupt should be triggered
+    pub fn should_trigger_stat_interrupt(&self) -> bool {
+        // Check LYC=LY condition
+        if self.lyc_int_select() && self.lyc_equals_ly() {
+            return true;
+        }
+
+        // Check mode interrupts
+        match self.ppu_mode {
+            0 if self.mode_0_int_select() => true, // HBlank
+            1 if self.mode_1_int_select() => true, // VBlank
+            2 if self.mode_2_int_select() => true, // OAM Scan
+            _ => false,
+        }
+    }
+
     // Tile addressing helpers
     pub fn get_bg_tile_map_base(&self) -> u16 {
         if self.bg_tile_map_area() {
@@ -298,12 +303,15 @@ impl PpuState {
 
     // Palette color lookup
     pub fn get_bg_color(&self, color_index: u8) -> u8 {
-        apply_bg_palette(color_index, self.bgp)
+        (self.bgp >> (color_index * 2)) & 0x03
     }
 
     pub fn get_obj_color(&self, palette: bool, color_index: u8) -> u8 {
+        if color_index == 0 {
+            return 0; // Color 0 is transparent for objects
+        }
         let palette_data = if palette { self.obp1 } else { self.obp0 };
-        apply_obj_palette(color_index, palette_data)
+        (palette_data >> (color_index * 2)) & 0x03
     }
 
     // Window visibility check
@@ -348,6 +356,20 @@ impl PpuState {
 
 use crate::driver::sleep;
 use crate::emulator::{with_state, with_state_mut};
+use crate::interrupts::{request_lcd_interrupt, request_vblank_interrupt};
+
+// PPU register addresses
+pub const LCDC_REGISTER: u16 = 0xFF40; // LCD Control
+pub const STAT_REGISTER: u16 = 0xFF41; // LCD Status
+pub const SCY_REGISTER: u16 = 0xFF42; // Scroll Y
+pub const SCX_REGISTER: u16 = 0xFF43; // Scroll X
+pub const LY_REGISTER: u16 = 0xFF44; // LCD Y Coordinate
+pub const LYC_REGISTER: u16 = 0xFF45; // LY Compare
+pub const BGP_REGISTER: u16 = 0xFF47; // Background Palette
+pub const OBP0_REGISTER: u16 = 0xFF48; // Object Palette 0
+pub const OBP1_REGISTER: u16 = 0xFF49; // Object Palette 1
+pub const WY_REGISTER: u16 = 0xFF4A; // Window Y Position
+pub const WX_REGISTER: u16 = 0xFF4B; // Window X Position
 
 // PPU timing constants
 const DOTS_PER_SCANLINE: u16 = 456;
@@ -377,25 +399,6 @@ struct SelectedObject {
     y: u8,
     tile_index: u8,
     attributes: u8,
-}
-
-impl SelectedObject {
-    // Attribute flag getters (same as OamEntry)
-    pub fn priority(&self) -> bool {
-        (self.attributes & 0x80) != 0
-    }
-
-    pub fn y_flip(&self) -> bool {
-        (self.attributes & 0x40) != 0
-    }
-
-    pub fn x_flip(&self) -> bool {
-        (self.attributes & 0x20) != 0
-    }
-
-    pub fn dmg_palette(&self) -> bool {
-        (self.attributes & 0x10) != 0
-    }
 }
 
 // Pixel FIFO structures
@@ -544,52 +547,41 @@ async fn execute_frame() {
 
     // Execute visible scanlines (0-143)
     for scanline in 0..VISIBLE_SCANLINES {
-        with_state_mut(|state| state.ppu.ly = scanline);
-        execute_visible_scanline().await;
-
-        // Increment window line counter if window was rendered on this scanline
-        with_state_mut(|state| {
-            if state.ppu.window_triggered {
-                state.ppu.window_line += 1;
-            }
+        let should_trigger_lyc = with_state_mut(|state| {
+            state.ppu.ly = scanline;
+            state.ppu.update_lyc_ly_flag();
+            state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly()
         });
+
+        if should_trigger_lyc {
+            request_lcd_interrupt();
+        }
+
+        execute_visible_scanline().await;
     }
 
     // Execute VBlank scanlines (144-153)
-    // Verify we have the expected number of VBlank scanlines and dots
-    let vblank_lines = SCANLINES_PER_FRAME - VISIBLE_SCANLINES;
-    debug_assert_eq!(
-        vblank_lines, VBLANK_SCANLINES,
-        "VBlank scanline count mismatch"
-    );
-    debug_assert_eq!(
-        vblank_lines as u16 * DOTS_PER_SCANLINE,
-        VBLANK_DOTS,
-        "VBlank dots calculation mismatch"
-    );
-
     for scanline in VISIBLE_SCANLINES..SCANLINES_PER_FRAME {
-        with_state_mut(|state| state.ppu.ly = scanline);
+        let should_trigger_lyc = with_state_mut(|state| {
+            state.ppu.ly = scanline;
+            state.ppu.update_lyc_ly_flag();
+            state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly()
+        });
+
+        if should_trigger_lyc {
+            request_lcd_interrupt();
+        }
+
         execute_vblank_scanline().await;
     }
 
-    // Mark frame as complete and emit VBlank event
+    // Mark frame as complete
     with_state_mut(|state| state.ppu.frame_complete = true);
-    crate::driver::emit_event(crate::driver::Event::VBlank);
 }
 
 async fn execute_visible_scanline() {
     // Reset scanline state
-    with_state_mut(|state| {
-        state.ppu.dots = 0;
-        state.ppu.update_lyc_ly_flag();
-    });
-
-    // Check for LYC=LY interrupt at start of scanline
-    let lyc_int = with_state(|state| state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly());
-    if lyc_int {
-        crate::interrupts::request_lcd_interrupt();
-    }
+    with_state_mut(|state| state.ppu.dots = 0);
 
     // Mode 2: OAM Scan (80 dots)
     execute_oam_scan().await;
@@ -599,113 +591,103 @@ async fn execute_visible_scanline() {
 
     // Mode 0: HBlank (remaining dots until 456 total)
     execute_hblank().await;
+
+    // Increment window line counter if window was visible on this scanline
+    with_state_mut(|state| {
+        if state.ppu.window_triggered {
+            state.ppu.window_line += 1;
+        }
+    });
 }
 
 async fn execute_vblank_scanline() {
-    // Reset dots and update LYC=LY flag at start of scanline
-    with_state_mut(|state| {
-        state.ppu.dots = 0;
+    // Check if this is the first VBlank scanline
+    let is_first_vblank = with_state(|state| state.ppu.ly == VISIBLE_SCANLINES);
+
+    // Set mode to VBlank
+    let should_trigger_stat = with_state_mut(|state| {
+        state.ppu.set_mode(MODE_VBLANK);
         state.ppu.update_lyc_ly_flag();
+        state.ppu.should_trigger_stat_interrupt()
     });
 
-    // Check for LYC=LY interrupt
-    let lyc_int = with_state(|state| state.ppu.lyc_int_select() && state.ppu.lyc_equals_ly());
-    if lyc_int {
-        crate::interrupts::request_lcd_interrupt();
+    // Trigger VBlank interrupt only on first VBlank scanline (LY=144)
+    if is_first_vblank {
+        request_vblank_interrupt();
+
+        // Also emit VBlank event for host system
+        crate::driver::emit_event(crate::driver::Event::VBlank);
     }
 
-    // Only set VBlank mode and trigger interrupt on line 144
-    let ly = with_state(|state| state.ppu.ly);
-    if ly == 144 {
-        // Set mode to VBlank
-        with_state_mut(|state| {
-            state.ppu.set_mode(MODE_VBLANK);
-        });
-
-        // Trigger VBlank interrupt only once when entering VBlank
-        crate::interrupts::request_vblank_interrupt();
-
-        // Trigger Mode 1 interrupt if enabled
-        let mode_1_int = with_state(|state| state.ppu.mode_1_int_select());
-        if mode_1_int {
-            crate::interrupts::request_lcd_interrupt();
-        }
+    // Trigger STAT interrupt if conditions are met
+    if should_trigger_stat {
+        request_lcd_interrupt();
     }
 
-    // Run dot-by-dot for proper cycle accuracy
-    while with_state(|state| state.ppu.dots < DOTS_PER_SCANLINE) {
-        sleep(1).await; // Sleep for 1 dot
-        with_state_mut(|state| {
-            state.ppu.dots = state.ppu.dots.saturating_add(1);
-        });
-    }
+    // Wait for full scanline duration
+    sleep(DOTS_PER_SCANLINE as usize).await;
 }
 
 async fn execute_oam_scan() {
     // Set mode to OAM scan
-    with_state_mut(|state| {
+    let should_trigger_stat = with_state_mut(|state| {
         state.ppu.set_mode(MODE_OAM_SCAN);
+        state.ppu.update_lyc_ly_flag();
+        state.ppu.should_trigger_stat_interrupt()
     });
 
-    // Trigger LCD interrupt if enabled for Mode 2
-    let mode_2_int = with_state(|state| state.ppu.mode_2_int_select());
-    if mode_2_int {
-        crate::interrupts::request_lcd_interrupt();
+    // Trigger STAT interrupt if conditions are met
+    if should_trigger_stat {
+        request_lcd_interrupt();
     }
 
     // Scan OAM for objects on current scanline
-    let selected_objects = scan_oam_for_objects().await;
+    let _selected_objects = scan_oam_for_objects().await;
 
-    // Store selected objects for use in drawing mode
-    with_state_mut(|state| {
-        state.ppu.selected_objects = selected_objects;
-    });
+    // TODO: Store selected objects for use in drawing mode
 
-    // Run dot-by-dot for OAM scan duration
-    let target_dots = with_state(|state| state.ppu.dots.saturating_add(OAM_SCAN_DOTS));
-    while with_state(|state| state.ppu.dots < target_dots) {
-        sleep(1).await; // Sleep for 1 dot
-        with_state_mut(|state| {
-            state.ppu.dots = state.ppu.dots.saturating_add(1);
-        });
-    }
+    // Wait for OAM scan duration and update dots
+    sleep(OAM_SCAN_DOTS as usize).await;
+    with_state_mut(|state| state.ppu.dots += OAM_SCAN_DOTS);
 }
 
 async fn execute_drawing() {
     // Set mode to drawing
-    with_state_mut(|state| state.ppu.set_mode(MODE_DRAWING));
+    with_state_mut(|state| {
+        state.ppu.set_mode(MODE_DRAWING);
+        // Note: No STAT interrupt is triggered for Mode 3
+    });
 
-    // Mode 3 doesn't trigger interrupts directly
+    // Calculate drawing duration based on penalties
+    let drawing_dots = calculate_drawing_duration().await;
 
-    // Render scanline (this will handle its own timing and dot counting)
+    // Initialize pixel FIFO and render scanline
     render_scanline().await;
+
+    // Wait for drawing duration and update dots
+    sleep(drawing_dots as usize).await;
+    with_state_mut(|state| state.ppu.dots += drawing_dots);
 }
 
 async fn execute_hblank() {
     // Set mode to HBlank
-    with_state_mut(|state| state.ppu.set_mode(MODE_HBLANK));
+    let should_trigger_stat = with_state_mut(|state| {
+        state.ppu.set_mode(MODE_HBLANK);
+        state.ppu.should_trigger_stat_interrupt()
+    });
 
-    // Trigger LCD interrupt if enabled for Mode 0
-    let mode_0_int = with_state(|state| state.ppu.mode_0_int_select());
-    if mode_0_int {
-        crate::interrupts::request_lcd_interrupt();
+    // Trigger STAT interrupt if conditions are met
+    if should_trigger_stat {
+        request_lcd_interrupt();
     }
 
-    // Check if we've already exceeded the scanline duration (shouldn't happen)
+    // Calculate remaining dots for HBlank
     let current_dots = with_state(|state| state.ppu.dots);
-    if current_dots >= DOTS_PER_SCANLINE {
-        #[cfg(debug_assertions)]
-        println!("Warning: HBlank started with dots={} >= {}", current_dots, DOTS_PER_SCANLINE);
-        return;
-    }
+    let hblank_dots = DOTS_PER_SCANLINE - current_dots;
 
-    // Run dot-by-dot for remaining scanline duration
-    while with_state(|state| state.ppu.dots < DOTS_PER_SCANLINE) {
-        sleep(1).await; // Sleep for 1 dot
-        with_state_mut(|state| {
-            state.ppu.dots = state.ppu.dots.saturating_add(1);
-        });
-    }
+    // Wait for HBlank duration and update dots
+    sleep(hblank_dots as usize).await;
+    with_state_mut(|state| state.ppu.dots += hblank_dots);
 }
 
 async fn scan_oam_for_objects() -> Vec<SelectedObject> {
@@ -736,9 +718,8 @@ async fn scan_oam_for_objects() -> Vec<SelectedObject> {
         }
     }
 
-    // Sort by X position for proper priority
-    selected_objects.sort_by_key(|obj| obj.x);
-
+    // No sorting - objects are selected in OAM order (first 10 matching)
+    // Drawing priority is handled differently during rendering
     selected_objects
 }
 
@@ -749,222 +730,54 @@ async fn calculate_drawing_duration() -> u16 {
     let scx_penalty = with_state(|state| (state.ppu.scx % 8) as u16);
     dots += scx_penalty;
 
-    // Penalty 2: Window rendering (6 dots when window starts)
-    let window_penalty = with_state(|state| {
-        if state.ppu.should_render_window() {
-            6 // Window incurs 6-dot penalty when it starts
-        } else {
-            0
-        }
-    });
-    dots += window_penalty;
-
-    // Penalty 3: Object rendering (6-11 dots per object)
-    let object_penalty = with_state(|state| {
-        let selected_objects = &state.ppu.selected_objects;
-        calculate_object_penalties(selected_objects)
-    });
-    dots += object_penalty;
+    // TODO: Penalty 2: Window rendering (6 dots when window starts)
+    // TODO: Penalty 3: Object rendering (6-11 dots per object)
 
     // Ensure we don't exceed maximum
     dots.min(DRAWING_MAX_DOTS)
 }
 
-fn calculate_object_penalties(selected_objects: &[SelectedObject]) -> u16 {
-    let mut penalty = 0;
-
-    let scx = with_state(|state| state.ppu.scx);
-
-    for obj in selected_objects {
-        // Only the object's leftmost pixel matters, transparent or not
-        let obj_x = obj.x.saturating_sub(8); // Convert from OAM coordinate to screen coordinate
-
-        if obj_x == 0 && obj.x == 0 {
-            // Special case: OBJ with OAM X position of 0 (completely off left side)
-            penalty += 11;
-        } else {
-            // Determine the tile that the pixel is within (affected by horizontal scrolling)
-            let _tile_offset = (obj_x + scx) / 8;
-            let pixels_right_of_obj = 8 - ((obj_x + scx) % 8);
-
-            // Subtract 2 and take max with 0 for waiting for BG fetch to finish
-            let bg_fetch_penalty = pixels_right_of_obj.saturating_sub(2);
-
-            // Flat 6-dot penalty for fetching the object's tile
-            let fetch_penalty = 6;
-
-            penalty += bg_fetch_penalty as u16 + fetch_penalty;
-        }
-    }
-
-    penalty
-}
-
-async fn render_bg_pixel(x: u8, ly: u8) -> u8 {
-    let (scx, scy, bg_tile_map_base, tile_data_signed, bgp) = with_state(|state| {
-        (
-            state.ppu.scx,
-            state.ppu.scy,
-            state.ppu.get_bg_tile_map_base(),
-            !state.ppu.bg_window_tile_data_area(), // false = $8000 (unsigned), true = $8800 (signed)
-            state.ppu.bgp,
-        )
-    });
-
-    // Calculate background coordinates with scrolling
-    let bg_x = x.wrapping_add(scx);
-    let bg_y = ly.wrapping_add(scy);
-
-    // Calculate tile coordinates
-    let tile_x = (bg_x / 8) as u16;
-    let tile_y = (bg_y / 8) as u16;
-
-    // Calculate pixel within tile
-    let pixel_x = bg_x % 8;
-    let pixel_y = bg_y % 8;
-
-    // Get tile index from tile map
-    let tile_map_addr = bg_tile_map_base + (tile_y * 32) + tile_x;
-    let tile_index = ppu_vram_read(tile_map_addr).await;
-
-    // Calculate tile data address
-    let tile_addr = if tile_data_signed {
-        // $8800 addressing: signed tile index, base at $9000
-        let signed_index = tile_index as i8;
-        (0x9000_u16).wrapping_add((signed_index as i16 * 16) as u16)
-    } else {
-        // $8000 addressing: unsigned tile index
-        0x8000 + (tile_index as u16 * 16)
-    };
-
-    // Get tile data for this line
-    let tile_line_addr = tile_addr + (pixel_y as u16 * 2);
-    let tile_data_low = ppu_vram_read(tile_line_addr).await;
-    let tile_data_high = ppu_vram_read(tile_line_addr + 1).await;
-
-    // Extract pixel color (2 bits)
-    let bit_pos = 7 - pixel_x;
-    let low_bit = (tile_data_low >> bit_pos) & 1;
-    let high_bit = (tile_data_high >> bit_pos) & 1;
-    let pixel_color = (high_bit << 1) | low_bit;
-
-    // Apply background palette
-    apply_bg_palette(pixel_color, bgp)
-}
-
-fn apply_bg_palette(color: u8, palette: u8) -> u8 {
-    let shift = color * 2;
-    (palette >> shift) & 0x03
-}
-
-fn apply_obj_palette(color: u8, palette: u8) -> u8 {
-    if color == 0 {
-        return 0; // Color 0 is transparent for objects
-    }
-    let shift = color * 2;
-    (palette >> shift) & 0x03
-}
-
 async fn render_scanline() {
-    // Choose rendering method based on implementation complexity
-    let use_fifo_renderer = true; // Could be made configurable for debugging
-
-    if use_fifo_renderer {
-        render_scanline_fifo().await;
-    } else {
-        render_scanline_simple().await;
-    }
-}
-
-async fn render_scanline_fifo() {
     // Initialize FIFO state for the scanline
     with_state_mut(|state| {
         state.ppu.bg_fifo.clear();
         state.ppu.obj_fifo.clear();
         state.ppu.fetcher.reset();
-        state.ppu.fetcher.x = (state.ppu.scx / 8) & 0x1F; // Start fetcher at correct tile based on SCX
         state.ppu.pixel_x = 0;
         state.ppu.window_triggered = false;
         state.ppu.scx_penalty_applied = false;
     });
 
-    // Apply SCX penalty (discarding pixels from leftmost tile)
+    // Apply SCX penalty if needed
     apply_scx_penalty().await;
 
-    // Main pixel rendering loop using FIFO
-    while with_state(|state| state.ppu.pixel_x < 160 && state.ppu.dots < DOTS_PER_SCANLINE) {
-        // Ensure we have enough pixels in background FIFO (at least 8)
-        let mut fetch_attempts = 0;
+    // Main pixel rendering loop
+    while with_state(|state| state.ppu.pixel_x < 160) {
+        // Ensure we have enough pixels in background FIFO
         while with_state(|state| state.ppu.bg_fifo.len() < 8) {
             step_fetcher().await;
-            fetch_attempts += 1;
-            
-            // Safety check: prevent infinite loop
-            if fetch_attempts > 100 {
-                #[cfg(debug_assertions)]
-                println!("Warning: Fetcher stuck at pixel_x={}", with_state(|state| state.ppu.pixel_x));
-                break;
-            }
         }
 
         // Check for window trigger
         check_window_trigger().await;
 
-        // Process objects if enabled and at current pixel position
+        // Process objects if enabled
         if with_state(|state| state.ppu.obj_enable()) {
             process_objects_at_pixel().await;
         }
 
-        // Render a pixel by mixing background and object FIFOs
-        render_pixel().await;
-
         // Advance pixel position
         with_state_mut(|state| state.ppu.pixel_x += 1);
+
+        // Render a pixel
+        render_pixel().await;
     }
-}
-
-// Alternative simple renderer for debugging/fallback
-async fn render_scanline_simple() {
-    let ly = with_state(|state| state.ppu.ly);
-
-    if with_state(|state| state.ppu.lcd_enable()) {
-        for x in 0..160 {
-            let final_color = if with_state(|state| state.ppu.bg_window_enable()) {
-                render_bg_pixel(x, ly).await
-            } else {
-                0 // Background disabled - white
-            };
-
-            with_state_mut(|state| {
-                state.ppu.set_pixel(x as usize, ly as usize, final_color);
-            });
-        }
-    }
-
-    // Simple renderer doesn't add its own timing - let execute_drawing handle it
 }
 
 async fn apply_scx_penalty() {
     let scx_penalty = with_state(|state| state.ppu.scx % 8);
     if scx_penalty > 0 {
-        // Pause rendering for SCX % 8 dots and discard that many pixels
         sleep(scx_penalty as usize).await;
-        with_state_mut(|state| {
-            state.ppu.dots = state.ppu.dots.saturating_add(scx_penalty as u16);
-        });
-
-        // Fill background FIFO with enough pixels to discard
-        while with_state(|state| state.ppu.bg_fifo.len() < scx_penalty as usize) {
-            step_fetcher().await;
-        }
-
-        // Discard the required number of pixels
-        for _ in 0..scx_penalty {
-            with_state_mut(|state| {
-                state.ppu.bg_fifo.pop();
-            });
-        }
-
         with_state_mut(|state| state.ppu.scx_penalty_applied = true);
     }
 }
@@ -976,37 +789,22 @@ async fn step_fetcher() {
         FetcherStep::GetTile => {
             execute_get_tile().await;
             sleep(2).await; // Get Tile takes 2 dots
-            with_state_mut(|state| {
-                state.ppu.dots = state.ppu.dots.saturating_add(2);
-            });
         }
         FetcherStep::GetTileDataLow => {
             execute_get_tile_data_low().await;
             sleep(2).await; // Get Tile Data Low takes 2 dots
-            with_state_mut(|state| {
-                state.ppu.dots = state.ppu.dots.saturating_add(2);
-            });
         }
         FetcherStep::GetTileDataHigh => {
             execute_get_tile_data_high().await;
             sleep(2).await; // Get Tile Data High takes 2 dots
-            with_state_mut(|state| {
-                state.ppu.dots = state.ppu.dots.saturating_add(2);
-            });
         }
         FetcherStep::Sleep => {
             sleep(2).await; // Sleep takes 2 dots
-            with_state_mut(|state| {
-                state.ppu.dots = state.ppu.dots.saturating_add(2);
-            });
         }
         FetcherStep::Push => {
             // Push step is attempted every dot until it succeeds
             let success = execute_push().await;
             sleep(1).await; // Always takes at least 1 dot
-            with_state_mut(|state| {
-                state.ppu.dots = state.ppu.dots.saturating_add(1);
-            });
 
             if !success {
                 // Push failed, don't advance step
@@ -1020,9 +818,8 @@ async fn step_fetcher() {
 }
 
 async fn execute_get_tile() {
-    let (fetcher_x, is_window, ly, _scx, scy, window_line) = with_state(|state| {
+    let (is_window, ly, scx, scy, window_line) = with_state(|state| {
         (
-            state.ppu.fetcher.x,
             state.ppu.fetcher.is_window,
             state.ppu.ly,
             state.ppu.scx,
@@ -1031,37 +828,38 @@ async fn execute_get_tile() {
         )
     });
 
-    // Calculate tile coordinates
     let (tile_x, tile_y) = if is_window {
-        // Window coordinates - use window line counter
-        (fetcher_x as u16, window_line as u16)
+        // Window coordinates
+        let window_x = with_state(|state| state.ppu.fetcher.x);
+        (window_x, window_line)
     } else {
-        // Background coordinates with scrolling
-        let bg_y = ly.wrapping_add(scy);
-        (fetcher_x as u16, bg_y as u16)
+        // Background coordinates
+        let bg_x = ((scx / 8) + with_state(|state| state.ppu.fetcher.x)) & 0x1F;
+        let bg_y = (ly.wrapping_add(scy)) & 0xFF;
+        (bg_x, bg_y)
     };
 
-    // Get tile map base address
+    // Determine which tile map to use
     let tile_map_base = if is_window {
         with_state(|state| state.ppu.get_window_tile_map_base())
     } else {
         with_state(|state| state.ppu.get_bg_tile_map_base())
     };
 
-    // Calculate tile address in tile map
-    let tile_map_addr = tile_map_base + ((tile_y / 8) * 32) + (tile_x & 0x1F);
+    // Calculate tile address
+    let tile_addr = tile_map_base + ((tile_y as u16 / 8) * 32) + (tile_x as u16);
 
-    // Read tile index from VRAM (or 0xFF if blocked)
+    // Read tile index
     let tile_index = if can_access_vram() {
-        ppu_vram_read(tile_map_addr).await
+        ppu_vram_read(tile_addr).await
     } else {
         0xFF
     };
 
-    // Store tile index in fetcher
     with_state_mut(|state| {
         state.ppu.fetcher.tile_index = tile_index;
-        state.ppu.fetcher.y = (tile_y % 8) as u8; // Current line within tile
+        state.ppu.fetcher.x = tile_x;
+        state.ppu.fetcher.y = tile_y;
     });
 }
 
@@ -1097,11 +895,15 @@ async fn execute_get_tile_data_high() {
     };
 
     with_state_mut(|state| state.ppu.fetcher.tile_data_high = tile_data_high);
+
+    // According to PPU notes, Get Tile Data High also pushes a row of pixels
+    // This is an extra push attempt, not part of the 8 steps
+    execute_push().await;
 }
 
 async fn execute_push() -> bool {
-    // Only push if background FIFO is empty
-    let can_push = with_state(|state| state.ppu.bg_fifo.is_empty());
+    // Can push if background FIFO has space (less than 8 pixels)
+    let can_push = with_state(|state| state.ppu.bg_fifo.len() <= 8);
 
     if !can_push {
         return false;
@@ -1147,201 +949,25 @@ async fn check_window_trigger() {
         with_state_mut(|state| {
             state.ppu.bg_fifo.clear();
             state.ppu.fetcher.reset();
-            state.ppu.fetcher.x = 0; // Window fetcher starts at tile 0
             state.ppu.fetcher.is_window = true;
             state.ppu.window_triggered = true;
         });
 
         // 6-dot penalty for window
         sleep(6).await;
-        with_state_mut(|state| {
-            state.ppu.dots = state.ppu.dots.saturating_add(6);
-        });
     }
 }
 
 async fn process_objects_at_pixel() {
-    let pixel_x = with_state(|state| state.ppu.pixel_x);
-
-    // Find objects at current pixel position
-    let objects_at_pixel = with_state(|state| {
-        state
-            .ppu
-            .selected_objects
-            .iter()
-            .filter(|obj| {
-                let obj_x = obj.x.saturating_sub(8); // Convert OAM coordinate to screen coordinate
-                let obj_end = obj_x + 8;
-                pixel_x >= obj_x && pixel_x < obj_end
-            })
-            .cloned()
-            .collect::<Vec<_>>()
-    });
-
-    if objects_at_pixel.is_empty() {
-        return;
-    }
-
-    // Process each object at this pixel (in priority order)
-    for obj in objects_at_pixel {
-        process_single_object(&obj).await;
-    }
-}
-
-async fn process_single_object(obj: &SelectedObject) {
-    let (_pixel_x, ly, scx, obj_size) = with_state(|state| {
-        (
-            state.ppu.pixel_x,
-            state.ppu.ly,
-            state.ppu.scx,
-            state.ppu.obj_size(),
-        )
-    });
-
-    // Advance fetcher one step until it's at step 5 or until the background FIFO is not empty
-    while with_state(|state| {
-        state.ppu.fetcher.step != FetcherStep::Push && state.ppu.bg_fifo.is_empty()
-    }) {
-        step_fetcher().await;
-    }
-
-    // Handle SCX penalty for objects at X coordinate 0
-    let obj_x = obj.x.saturating_sub(8);
-    if obj_x == 0 && scx & 7 > 0 {
-        let penalty = scx & 7;
-        sleep(penalty as usize).await;
-        with_state_mut(|state| {
-            state.ppu.dots = state.ppu.dots.saturating_add(penalty as u16);
-        });
-    }
-
-    // Advance fetcher two steps with penalties
-    step_fetcher().await; // First advancement (1 dot)
-    sleep(3).await; // Second advancement (3 dots)
-    with_state_mut(|state| {
-        state.ppu.dots = state.ppu.dots.saturating_add(3);
-    });
-
-    // Fetch object tile data
-    let (tile_data_low, tile_data_high) = fetch_object_tile_data(obj, ly, obj_size).await;
-
-    // Ensure OAM FIFO has at least 8 pixels
-    while with_state(|state| state.ppu.obj_fifo.len() < 8) {
-        with_state_mut(|state| state.ppu.obj_fifo.fill_with_transparent(1));
-    }
-
-    // Mix object pixels into OAM FIFO
-    mix_object_pixels_into_fifo(obj, tile_data_low, tile_data_high, ly, obj_size).await;
-}
-
-async fn fetch_object_tile_data(obj: &SelectedObject, ly: u8, obj_size: bool) -> (u8, u8) {
-    let obj_height = if obj_size { 16 } else { 8 };
-    let obj_y = obj.y.saturating_sub(16);
-    let tile_line = ly.saturating_sub(obj_y);
-
-    // Handle Y flip
-    let actual_tile_line = if obj.y_flip() {
-        (obj_height - 1) - tile_line
-    } else {
-        tile_line
-    };
-
-    // Calculate tile index for 8x16 mode
-    let tile_index = if obj_size {
-        // 8x16 mode: use even tiles for top half, odd for bottom half
-        if actual_tile_line < 8 {
-            obj.tile_index & 0xFE // Even tile (top half)
-        } else {
-            obj.tile_index | 0x01 // Odd tile (bottom half)
-        }
-    } else {
-        obj.tile_index
-    };
-
-    // Objects always use $8000 addressing
-    let tile_addr = 0x8000 + (tile_index as u16 * 16);
-    let line_in_tile = actual_tile_line % 8;
-    let data_addr = tile_addr + (line_in_tile as u16 * 2);
-
-    // Fetch tile data with cycle timing
-    sleep(1).await; // Lower address fetch
-    let tile_data_low = if can_access_vram() {
-        ppu_vram_read(data_addr).await
-    } else {
-        0xFF
-    };
-
-    let tile_data_high = if can_access_vram() {
-        ppu_vram_read(data_addr + 1).await
-    } else {
-        0xFF
-    };
-
-    sleep(1).await; // Exit object fetch penalty
-
-    (tile_data_low, tile_data_high)
-}
-
-async fn mix_object_pixels_into_fifo(
-    obj: &SelectedObject,
-    tile_data_low: u8,
-    tile_data_high: u8,
-    _ly: u8,
-    _obj_size: bool,
-) {
-    let pixel_x = with_state(|state| state.ppu.pixel_x);
-    let obj_x = obj.x.saturating_sub(8);
-
-    // Calculate which pixels of the tile to mix
-    let start_bit = pixel_x.saturating_sub(obj_x);
-
-    // Generate pixels for the object tile row
-    for bit_pos in start_bit..8.min(start_bit + 8) {
-        let bit = if obj.x_flip() {
-            // X flip: start from LSB
-            bit_pos
-        } else {
-            // Normal: start from MSB
-            7 - bit_pos
-        };
-
-        let low_bit = (tile_data_low >> bit) & 1;
-        let high_bit = (tile_data_high >> bit) & 1;
-        let color = (high_bit << 1) | low_bit;
-
-        // Get palette selection using SelectedObject methods
-        let palette = obj.dmg_palette();
-        let bg_priority = obj.priority();
-
-        let obj_pixel = FifoPixel::new(color, palette, bg_priority);
-
-        // Mix with existing pixel in OAM FIFO if conditions are met
-        with_state_mut(|state| {
-            if let Some(existing_pixel) = state.ppu.obj_fifo.pixels.get_mut(bit_pos as usize) {
-                // Replace if target object pixel is not transparent and
-                // (existing pixel is transparent OR existing pixel has higher priority)
-                if color != 0 && (existing_pixel.color == 0 || !existing_pixel.bg_priority) {
-                    *existing_pixel = obj_pixel;
-
-                    // Track which OAM entry contributed to this pixel (for debugging)
-                    #[cfg(debug_assertions)]
-                    {
-                        // In debug builds, we track which OAM entry contributed
-                        let _ = obj.oam_index; // Use the field to prevent dead code warning
-                    }
-                }
-            }
-        });
-    }
+    // TODO: Implement object processing
+    // This is complex and involves:
+    // - Finding objects at current pixel
+    // - Fetching object tile data
+    // - Mixing with OAM FIFO
+    // - Handling penalties and priority
 }
 
 async fn render_pixel() {
-    // Each pixel output takes 1 dot
-    sleep(1).await;
-    with_state_mut(|state| {
-        state.ppu.dots = state.ppu.dots.saturating_add(1);
-    });
-    
     let bg_pixel = with_state_mut(|state| state.ppu.bg_fifo.pop());
     let obj_pixel = with_state_mut(|state| state.ppu.obj_fifo.pop());
 
@@ -1354,7 +980,7 @@ async fn render_pixel() {
     });
 
     // Skip rendering if we're past the visible area
-    if pixel_x >= 160 {
+    if pixel_x > 160 {
         return;
     }
 
@@ -1399,30 +1025,22 @@ async fn render_pixel() {
     });
 }
 
-// Memory access functions for PPU - direct access to PPU state
+// Memory access functions for PPU (similar to CPU pattern)
 async fn ppu_vram_read(address: u16) -> u8 {
     sleep(4).await; // VRAM access takes 4 cycles
     with_state(|state| {
-        let vram_addr = (address & 0x1FFF) as usize;
-        if vram_addr < 0x1800 {
-            // Tile data area (0x8000-0x97FF)
-            let tile_index = vram_addr / 16;
-            let byte_in_tile = vram_addr % 16;
-            state.ppu.vram[tile_index][byte_in_tile]
-        } else {
-            // Tile map areas (0x9800-0x9FFF)
-            let map_addr = vram_addr - 0x1800;
-            if map_addr < 0x400 {
-                state.ppu.bg_tile_map_0[map_addr]
-            } else {
-                state.ppu.bg_tile_map_1[map_addr - 0x400]
-            }
-        }
+        let dma_active = state.dma.is_bus_restricted();
+        state.mmu.read(address, dma_active, &state.ppu)
     })
 }
 
-// OAM access is handled directly through MMU with proper PPU mode restrictions
-// using can_access_oam() function
+async fn ppu_oam_read(address: u16) -> u8 {
+    sleep(4).await; // OAM access takes 4 cycles  
+    with_state(|state| {
+        let dma_active = state.dma.is_bus_restricted();
+        state.mmu.read(address, dma_active, &state.ppu)
+    })
+}
 
 // Helper function to check if PPU can access memory
 fn can_access_vram() -> bool {
@@ -1432,11 +1050,9 @@ fn can_access_vram() -> bool {
     })
 }
 
-pub fn can_access_oam() -> bool {
+fn can_access_oam() -> bool {
     with_state(|state| {
         let mode = state.ppu.ppu_mode;
         mode == MODE_HBLANK || mode == MODE_VBLANK // OAM accessible in modes 0, 1 only
     })
 }
-
-// Functions needed for FIFO PPU are integrated into the main rendering pipeline
