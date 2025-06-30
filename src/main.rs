@@ -21,6 +21,10 @@ struct Args {
     /// Scale factor for the display (default: 3)
     #[arg(short = 's', long, default_value = "3")]
     scale: u32,
+
+    /// Debug mode: save a screenshot after 5 seconds
+    #[arg(short = 'd', long)]
+    debug: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -51,8 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let driver = create_driver();
     let mut runner = EmulationRunner::new(driver, renderer);
 
-    // Run the emulation
-    runner.run(|| sdl_system.poll_events())?;
+    // Run the emulation with debug flag
+    runner.run(|| sdl_system.poll_events(), args.debug)?;
 
     Ok(())
 }
