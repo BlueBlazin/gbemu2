@@ -1109,34 +1109,44 @@ async fn execute_daa() {
     // DAA - 1 M-cycle total
     // Decimal adjust accumulator
     with_state_mut(|state| {
-        let mut a = state.cpu.a as u16;
+        let mut result = state.cpu.a as i16;
 
-        if !state.cpu.flag_n() {
-            // Previous operation was addition
-            if state.cpu.flag_h() || (a & 0xF) > 0x9 {
-                a = a.wrapping_add(0x6);
-            }
-            if state.cpu.flag_c() || a > 0x9F {
-                a = a.wrapping_add(0x60);
-                state.cpu.set_flag_c(true);
-            } else {
-                state.cpu.set_flag_c(false);
-            }
-        } else {
+        // Clear Z and C flags initially (equivalent to clearing 0xFF00 | GB_ZERO_FLAG)
+        // Note: H flag is always cleared at the end, N flag is preserved
+
+        if state.cpu.flag_n() {
             // Previous operation was subtraction
             if state.cpu.flag_h() {
-                a = a.wrapping_sub(0x6);
+                result = (result - 0x06) & 0xFF;
             }
             if state.cpu.flag_c() {
-                a = a.wrapping_sub(0x60);
+                result -= 0x60;
+            }
+        } else {
+            // Previous operation was addition
+            if state.cpu.flag_h() || (result & 0x0F) > 0x09 {
+                result += 0x06;
+            }
+            if state.cpu.flag_c() || result > 0x9F {
+                result += 0x60;
             }
         }
 
-        let result = (a & 0xFF) as u8;
-        state.cpu.a = result;
-        state.cpu.set_flag_z(result == 0);
-        state.cpu.set_flag_h(false);
-        // Carry flag was already set above if needed
+        // Set Z flag if result is zero
+        let zero_flag = (result & 0xFF) == 0;
+
+        // Set C flag if there was overflow (bit 8 set)
+        let carry_flag = (result & 0x100) == 0x100;
+
+        // Always clear H flag
+        let half_carry_flag = false;
+
+        // Update A register and flags
+        state.cpu.a = (result & 0xFF) as u8;
+        state.cpu.set_flag_z(zero_flag);
+        state.cpu.set_flag_h(half_carry_flag);
+        state.cpu.set_flag_c(carry_flag);
+        // N flag is preserved (not modified)
     });
 }
 
