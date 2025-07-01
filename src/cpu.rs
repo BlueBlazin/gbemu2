@@ -1112,53 +1112,95 @@ async fn execute_scf() {
 
 async fn execute_daa() {
     // DAA - 1 M-cycle total
-    // Decimal adjust accumulator
-
-    // Code copied from: https://github.com/LIJI32/SameBoy/blob/master/Core/sm83_cpu.c
+    // Decimal adjust accumulator.
+    // This instruction adjusts the A register to a BCD value after an ADD or SUB.
     with_state_mut(|state| {
-        let mut result = state.cpu.af() >> 8;
+        let mut a = state.cpu.a as u16;
+        let mut correction = 0x00;
 
-        state
-            .cpu
-            .set_af(state.cpu.af() & !(0xFF00 | (state.cpu.flag_z() as u16)));
+        let n_flag = state.cpu.flag_n();
+        let h_flag = state.cpu.flag_h();
+        let mut c_flag = state.cpu.flag_c();
 
-        if (state.cpu.af() & (state.cpu.flag_n() as u16)) != 0 {
-            if (state.cpu.af() & (state.cpu.flag_h() as u16)) != 0 {
-                result = (result - 0x06) & 0xFF;
-            }
+        if h_flag || (!n_flag && (a & 0x0F) > 0x09) {
+            correction |= 0x06;
+        }
 
-            if (state.cpu.af() & (state.cpu.flag_c() as u16)) != 0 {
-                result -= 0x60;
-            }
+        if c_flag || (!n_flag && a > 0x99) {
+            correction |= 0x60;
+            c_flag = true;
+        }
+
+        if n_flag {
+            a = a.wrapping_sub(correction);
         } else {
-            if ((state.cpu.af() & (state.cpu.flag_h() as u16)) != 0) || ((result & 0x0F) > 0x09) {
-                result += 0x06;
-            }
-
-            if ((state.cpu.af() & (state.cpu.flag_c() as u16)) != 0) || (result > 0x9F) {
-                result += 0x60;
-            }
+            a = a.wrapping_add(correction);
         }
 
-        if (result & 0xFF) == 0 {
-            state
-                .cpu
-                .set_af(state.cpu.af() | (state.cpu.flag_z() as u16));
-        }
+        // Update A register
+        state.cpu.a = (a & 0xFF) as u8;
 
-        if (result & 0x100) == 0x100 {
-            state
-                .cpu
-                .set_af(state.cpu.af() | (state.cpu.flag_c() as u16));
-        }
+        // Update flags
+        // Z is set if the result is 0
+        let z_flag = state.cpu.a == 0;
+        // H is always reset
+        let h_flag_new = false;
+        // N is not affected
+        // C is set or cleared above
 
-        state
-            .cpu
-            .set_af(state.cpu.af() & !(state.cpu.flag_h() as u16));
-
-        state.cpu.set_af(state.cpu.af() | (result << 8));
+        state.cpu.set_flags(z_flag, n_flag, h_flag_new, c_flag);
     });
 }
+
+// async fn execute_daa() {
+//     // DAA - 1 M-cycle total
+//     // Decimal adjust accumulator
+
+//     // Code copied from: https://github.com/LIJI32/SameBoy/blob/master/Core/sm83_cpu.c
+//     with_state_mut(|state| {
+//         let mut result = state.cpu.af() >> 8;
+
+//         state
+//             .cpu
+//             .set_af(state.cpu.af() & !(0xFF00 | (state.cpu.flag_z() as u16)));
+
+//         if (state.cpu.af() & (state.cpu.flag_n() as u16)) != 0 {
+//             if (state.cpu.af() & (state.cpu.flag_h() as u16)) != 0 {
+//                 result = (result - 0x06) & 0xFF;
+//             }
+
+//             if (state.cpu.af() & (state.cpu.flag_c() as u16)) != 0 {
+//                 result -= 0x60;
+//             }
+//         } else {
+//             if ((state.cpu.af() & (state.cpu.flag_h() as u16)) != 0) || ((result & 0x0F) > 0x09) {
+//                 result += 0x06;
+//             }
+
+//             if ((state.cpu.af() & (state.cpu.flag_c() as u16)) != 0) || (result > 0x9F) {
+//                 result += 0x60;
+//             }
+//         }
+
+//         if (result & 0xFF) == 0 {
+//             state
+//                 .cpu
+//                 .set_af(state.cpu.af() | (state.cpu.flag_z() as u16));
+//         }
+
+//         if (result & 0x100) == 0x100 {
+//             state
+//                 .cpu
+//                 .set_af(state.cpu.af() | (state.cpu.flag_c() as u16));
+//         }
+
+//         state
+//             .cpu
+//             .set_af(state.cpu.af() & !(state.cpu.flag_h() as u16));
+
+//         state.cpu.set_af(state.cpu.af() | (result << 8));
+//     });
+// }
 
 async fn execute_cpl() {
     // CPL - 1 M-cycle total
