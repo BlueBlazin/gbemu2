@@ -449,11 +449,10 @@ impl PixelFifo {
 // Pixel Fetcher states
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FetcherStep {
-    GetTile = 1,
-    GetTileDataLow = 2,
-    GetTileDataHigh = 3,
-    Sleep = 4,
-    Push = 5,
+    GetTile,
+    GetTileDataLow,
+    GetTileDataHigh,
+    Push,
 }
 
 #[derive(Debug, Clone)]
@@ -488,8 +487,7 @@ impl PixelFetcher {
         self.step = match self.step {
             FetcherStep::GetTile => FetcherStep::GetTileDataLow,
             FetcherStep::GetTileDataLow => FetcherStep::GetTileDataHigh,
-            FetcherStep::GetTileDataHigh => FetcherStep::Sleep,
-            FetcherStep::Sleep => FetcherStep::Push,
+            FetcherStep::GetTileDataHigh => FetcherStep::Push,
             FetcherStep::Push => FetcherStep::GetTile,
         };
     }
@@ -747,18 +745,10 @@ async fn step_fetcher() {
             execute_get_tile_data_high().await; // Includes 1 dot for VRAM read
             sleep(1).await; // 1 more dot for processing = 2 dots total
         }
-        FetcherStep::Sleep => {
-            sleep(2).await; // Sleep takes 2 dots
-        }
         FetcherStep::Push => {
             // Push step is attempted every dot until it succeeds
-            let success = execute_push().await;
-            sleep(1).await; // Always takes at least 1 dot
-
-            if !success {
-                // Push failed, don't advance step
-                return;
-            }
+            execute_push().await;
+            sleep(2).await; // Always takes at least 1 dot
         }
     }
 
@@ -833,9 +823,9 @@ async fn execute_get_tile_data_high() {
 
     with_state_mut(|state| state.ppu.fetcher.tile_data_high = tile_data_high);
 
-    // According to PPU notes, Get Tile Data High also pushes a row of pixels
-    // This is an extra push attempt, not part of the 8 steps
-    execute_push().await;
+    // // According to PPU notes, Get Tile Data High also pushes a row of pixels
+    // // This is an extra push attempt, not part of the 8 steps
+    // execute_push().await;
 }
 
 async fn execute_push() -> bool {
@@ -945,6 +935,7 @@ async fn render_pixel() {
         } else {
             // No object pixel, use background
             if bg_enabled {
+                // with_state(|state| state.ppu.get_bg_color(bg_pixel.color))
                 with_state(|state| state.ppu.get_bg_color(bg_pixel.color))
             } else {
                 0 // Background disabled
