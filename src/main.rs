@@ -1,6 +1,6 @@
 use clap::Parser;
 use gbemu2::emulation_runner::EmulationRunner;
-use gbemu2::emulator::{create_driver, init_emulator, load_cartridge};
+use gbemu2::emulator::{create_driver, init_emulator_with_debug, load_cartridge};
 use gbemu2::renderer::{Renderer, SdlSystem};
 use gbemu2::rom_loader::RomLoader;
 use std::path::PathBuf;
@@ -43,8 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Starting emulation...");
 
-    // Initialize emulator
-    init_emulator();
+    // Initialize emulator with debug mode if requested
+    init_emulator_with_debug(args.debug);
     load_cartridge(rom_loader.rom_data)?;
 
     // Initialize SDL system and create renderer

@@ -184,6 +184,7 @@ impl MMU {
             0x8000..=0x9FFF => {
                 // Check if VRAM is accessible based on PPU mode
                 let mode = ppu.ppu_mode;
+
                 if mode != 3 {
                     // VRAM accessible in modes 0, 1, 2 but not mode 3
                     let vram_addr = (address & 0x1FFF) as usize;

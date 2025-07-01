@@ -153,7 +153,6 @@ impl Driver {
 
             // Get futures to poll during this cycle
             let futures = self.futures_queue.remove(&next_cycle).unwrap();
-
             let mut cx = Context::from_waker(Waker::noop());
 
             for mut future in futures {

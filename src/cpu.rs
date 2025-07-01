@@ -18,8 +18,13 @@ async fn fetch() -> u8 {
     let pc = with_state(|state| state.cpu.pc);
     let instruction = memory_read(pc).await;
 
-    // Increment PC after fetch
+    // Log opcode in debug mode
     with_state_mut(|state| {
+        if state.debug_mode {
+            state.opcode_log.push((pc, instruction));
+        }
+
+        // Increment PC after fetch
         state.cpu.pc = pc.wrapping_add(1);
     });
 

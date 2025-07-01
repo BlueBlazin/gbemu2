@@ -219,10 +219,8 @@ async fn step_timer() {
     }
 
     // First, process any pending timer overflow from previous cycle
-    let should_interrupt = with_state_mut(|state| {
-        state.timer.process_timer_overflow()
-    });
-    
+    let should_interrupt = with_state_mut(|state| state.timer.process_timer_overflow());
+
     // Request timer interrupt if needed (outside the borrow context)
     if should_interrupt {
         request_timer_interrupt();

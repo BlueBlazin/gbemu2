@@ -152,6 +152,8 @@ pub struct EmulatorState {
     pub interrupts: InterruptState,
     pub timer: TimerState,
     pub dma: DmaState,
+    pub debug_mode: bool,
+    pub opcode_log: Vec<(u16, u8)>, // (PC, opcode)
 }
 
 impl Default for EmulatorState {
@@ -169,6 +171,8 @@ impl EmulatorState {
             interrupts: InterruptState::new(),
             timer: TimerState::new(),
             dma: DmaState::new(),
+            debug_mode: false,
+            opcode_log: Vec::new(),
         }
     }
 

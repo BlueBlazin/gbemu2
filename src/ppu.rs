@@ -1,3 +1,7 @@
+use crate::driver::{Event, emit_event, sleep};
+use crate::emulator::{with_state, with_state_mut};
+use crate::interrupts::{request_lcd_interrupt, request_vblank_interrupt};
+
 #[derive(Debug, Clone, Copy)]
 pub struct OamEntry {
     pub y: u8,          // Y position + 16
@@ -352,10 +356,6 @@ impl PpuState {
     }
 }
 
-use crate::driver::sleep;
-use crate::emulator::{with_state, with_state_mut};
-use crate::interrupts::{request_lcd_interrupt, request_vblank_interrupt};
-
 // PPU register addresses
 pub const LCDC_REGISTER: u16 = 0xFF40; // LCD Control
 pub const STAT_REGISTER: u16 = 0xFF41; // LCD Status
@@ -584,7 +584,8 @@ async fn execute_vblank_scanline() {
         request_vblank_interrupt();
 
         // Also emit VBlank event for host system
-        crate::driver::emit_event(crate::driver::Event::VBlank);
+        println!("Emiting VBlank");
+        emit_event(Event::VBlank);
     }
 
     // Trigger STAT interrupt if conditions are met

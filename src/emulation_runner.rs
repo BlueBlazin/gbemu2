@@ -2,6 +2,8 @@ use crate::driver::{Driver, Event};
 use crate::emulator::with_state;
 use crate::renderer::Renderer;
 use image::{ImageBuffer, Rgb};
+use std::fs::File;
+use std::io::Write;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const GB_CLOCK_SPEED: f64 = 4_194_304.0; // Hz
@@ -99,6 +101,11 @@ impl EmulationRunner {
             }
         }
 
+        // Write debug log if in debug mode
+        if debug_mode {
+            self.write_debug_log()?;
+        }
+
         Ok(())
     }
 
@@ -120,6 +127,7 @@ impl EmulationRunner {
             // Handle events
             match result.event {
                 Event::VBlank => {
+                    println!("VBlank");
                     // Render the frame when PPU signals VBlank
                     self.renderer.render_frame()?;
                 }
@@ -128,32 +136,6 @@ impl EmulationRunner {
                 }
                 Event::MaxCycles => {
                     // We've executed all requested cycles
-                    // Due to a driver quirk, this might happen even with some cycles remaining
-                    // if there are no futures scheduled exactly at those cycles
-                    if remaining_cycles > 0 && cycles_executed == 0 {
-                        // No progress made, skip remaining cycles
-                        break;
-                    }
-                }
-            }
-
-            // Safety check: if no cycles were executed, something might be wrong
-            if cycles_executed == 0 && remaining_cycles > 0 {
-                // This can happen when there are no futures scheduled for the remaining cycles
-                // For small numbers of remaining cycles, this is usually OK
-                if remaining_cycles > 100 {
-                    println!(
-                        "Warning: No cycles executed with {} cycles remaining.",
-                        remaining_cycles
-                    );
-                    println!("Debug: total_cycles = {}", stats.total_cycles);
-
-                    // Try to render current state
-                    self.renderer.render_frame()?;
-
-                    return Err("Emulator appears to be stuck.".to_string());
-                } else {
-                    // Just skip the remaining cycles if it's a small amount
                     break;
                 }
             }
@@ -217,5 +199,188 @@ impl EmulationRunner {
 
         println!("Debug: Screenshot saved as {}", filename);
         Ok(())
+    }
+
+    fn write_debug_log(&self) -> Result<(), String> {
+        // Get the opcode log from state
+        let opcode_log = with_state(|state| state.opcode_log.clone());
+
+        // Create debug.txt file
+        let mut file =
+            File::create("debug.txt").map_err(|e| format!("Failed to create debug.txt: {}", e))?;
+
+        // Write header
+        writeln!(&mut file, "Game Boy Emulator Debug Log")
+            .map_err(|e| format!("Failed to write to debug.txt: {}", e))?;
+        writeln!(&mut file, "Total opcodes executed: {}", opcode_log.len())
+            .map_err(|e| format!("Failed to write to debug.txt: {}", e))?;
+        writeln!(&mut file, "\nPC    | Opcode | Instruction")
+            .map_err(|e| format!("Failed to write to debug.txt: {}", e))?;
+        writeln!(&mut file, "------|--------|-------------")
+            .map_err(|e| format!("Failed to write to debug.txt: {}", e))?;
+
+        // Write each opcode
+        for (pc, opcode) in opcode_log.iter() {
+            writeln!(
+                &mut file,
+                "0x{:04X} | 0x{:02X}   | {}",
+                pc,
+                opcode,
+                get_instruction_name(*opcode)
+            )
+            .map_err(|e| format!("Failed to write to debug.txt: {}", e))?;
+        }
+
+        println!("Debug: Opcode log saved to debug.txt");
+        Ok(())
+    }
+}
+
+// Helper function to get instruction name (basic version)
+fn get_instruction_name(opcode: u8) -> &'static str {
+    match opcode {
+        0x00 => "NOP",
+        0x01 => "LD BC,nn",
+        0x02 => "LD (BC),A",
+        0x03 => "INC BC",
+        0x04 => "INC B",
+        0x05 => "DEC B",
+        0x06 => "LD B,n",
+        0x07 => "RLCA",
+        0x08 => "LD (nn),SP",
+        0x09 => "ADD HL,BC",
+        0x0A => "LD A,(BC)",
+        0x0B => "DEC BC",
+        0x0C => "INC C",
+        0x0D => "DEC C",
+        0x0E => "LD C,n",
+        0x0F => "RRCA",
+
+        0x10 => "STOP",
+        0x11 => "LD DE,nn",
+        0x12 => "LD (DE),A",
+        0x13 => "INC DE",
+        0x14 => "INC D",
+        0x15 => "DEC D",
+        0x16 => "LD D,n",
+        0x17 => "RLA",
+        0x18 => "JR n",
+        0x19 => "ADD HL,DE",
+        0x1A => "LD A,(DE)",
+        0x1B => "DEC DE",
+        0x1C => "INC E",
+        0x1D => "DEC E",
+        0x1E => "LD E,n",
+        0x1F => "RRA",
+
+        0x20 => "JR NZ,n",
+        0x21 => "LD HL,nn",
+        0x22 => "LD (HL+),A",
+        0x23 => "INC HL",
+        0x24 => "INC H",
+        0x25 => "DEC H",
+        0x26 => "LD H,n",
+        0x27 => "DAA",
+        0x28 => "JR Z,n",
+        0x29 => "ADD HL,HL",
+        0x2A => "LD A,(HL+)",
+        0x2B => "DEC HL",
+        0x2C => "INC L",
+        0x2D => "DEC L",
+        0x2E => "LD L,n",
+        0x2F => "CPL",
+
+        0x30 => "JR NC,n",
+        0x31 => "LD SP,nn",
+        0x32 => "LD (HL-),A",
+        0x33 => "INC SP",
+        0x34 => "INC (HL)",
+        0x35 => "DEC (HL)",
+        0x36 => "LD (HL),n",
+        0x37 => "SCF",
+        0x38 => "JR C,n",
+        0x39 => "ADD HL,SP",
+        0x3A => "LD A,(HL-)",
+        0x3B => "DEC SP",
+        0x3C => "INC A",
+        0x3D => "DEC A",
+        0x3E => "LD A,n",
+        0x3F => "CCF",
+
+        0x40..=0x7F => {
+            if opcode == 0x76 {
+                "HALT"
+            } else {
+                "LD r,r"
+            }
+        }
+
+        0x80..=0x87 => "ADD A,r",
+        0x88..=0x8F => "ADC A,r",
+        0x90..=0x97 => "SUB r",
+        0x98..=0x9F => "SBC A,r",
+        0xA0..=0xA7 => "AND r",
+        0xA8..=0xAF => "XOR r",
+        0xB0..=0xB7 => "OR r",
+        0xB8..=0xBF => "CP r",
+
+        0xC0 => "RET NZ",
+        0xC1 => "POP BC",
+        0xC2 => "JP NZ,nn",
+        0xC3 => "JP nn",
+        0xC4 => "CALL NZ,nn",
+        0xC5 => "PUSH BC",
+        0xC6 => "ADD A,n",
+        0xC7 => "RST 00H",
+        0xC8 => "RET Z",
+        0xC9 => "RET",
+        0xCA => "JP Z,nn",
+        0xCB => "CB prefix",
+        0xCC => "CALL Z,nn",
+        0xCD => "CALL nn",
+        0xCE => "ADC A,n",
+        0xCF => "RST 08H",
+
+        0xD0 => "RET NC",
+        0xD1 => "POP DE",
+        0xD2 => "JP NC,nn",
+        0xD4 => "CALL NC,nn",
+        0xD5 => "PUSH DE",
+        0xD6 => "SUB n",
+        0xD7 => "RST 10H",
+        0xD8 => "RET C",
+        0xD9 => "RETI",
+        0xDA => "JP C,nn",
+        0xDC => "CALL C,nn",
+        0xDE => "SBC A,n",
+        0xDF => "RST 18H",
+
+        0xE0 => "LDH (n),A",
+        0xE1 => "POP HL",
+        0xE2 => "LD (C),A",
+        0xE5 => "PUSH HL",
+        0xE6 => "AND n",
+        0xE7 => "RST 20H",
+        0xE8 => "ADD SP,n",
+        0xE9 => "JP (HL)",
+        0xEA => "LD (nn),A",
+        0xEE => "XOR n",
+        0xEF => "RST 28H",
+
+        0xF0 => "LDH A,(n)",
+        0xF1 => "POP AF",
+        0xF2 => "LD A,(C)",
+        0xF3 => "DI",
+        0xF5 => "PUSH AF",
+        0xF6 => "OR n",
+        0xF7 => "RST 30H",
+        0xF8 => "LD HL,SP+n",
+        0xF9 => "LD SP,HL",
+        0xFA => "LD A,(nn)",
+        0xFB => "EI",
+        0xFE => "CP n",
+        0xFF => "RST 38H",
+
+        _ => "Unknown",
     }
 }

@@ -27,6 +27,14 @@ pub fn init_emulator() {
     });
 }
 
+pub fn init_emulator_with_debug(debug_mode: bool) {
+    STATE.with(|state| {
+        let mut new_state = EmulatorState::new();
+        new_state.debug_mode = debug_mode;
+        *state.borrow_mut() = new_state;
+    });
+}
+
 pub fn create_driver() -> Driver {
     let mut driver = Driver::new();
     driver.spawn(cpu::cpu());
@@ -35,7 +43,6 @@ pub fn create_driver() -> Driver {
     driver.spawn(dma::dma_component());
     driver
 }
-
 
 pub fn load_cartridge(rom_data: Vec<u8>) -> Result<(), String> {
     STATE.with(|state| state.borrow_mut().load_cartridge(rom_data))
