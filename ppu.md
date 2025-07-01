@@ -282,8 +282,8 @@ Pixel fetcher has 5 steps. The first four steps take 2 dots each and the fifth s
 1. Get tile
 2. Get tile data low
 3. Get tile data high
-4. Sleep
-5. Push
+4. Push 0
+5. Push 1
 
 ##### Get Tile
 
@@ -310,10 +310,6 @@ Pixel fetcher has 5 steps. The first four steps take 2 dots each and the fifth s
 - Pushes a row of background/window pixels to the FIFO. Since tiles are 8 pixels wide, a “row” of pixels is 8 pixels from the tile to be rendered based on the X and Y coordinates calculated in the previous steps
 - Pixels are only pushed to the background FIFO if it’s empty
 - This is where the tile data retrieved in the two Tile Data steps will come in handy. Depending on if the tile is flipped horizontally the pixels will be pushed to the background FIFO differently. If the tile is flipped horizontally the pixels will be pushed LSB first. Otherwise they will be pushed MSB first
-
-##### Sleep
-
-- Do nothing
 
 #### Mode 3 Operation
 
