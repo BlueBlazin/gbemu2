@@ -734,21 +734,26 @@ async fn step_fetcher() {
 
     match step {
         FetcherStep::GetTile => {
+            sleep(1).await;
             execute_get_tile().await; // Includes 1 dot for VRAM read
-            sleep(1).await; // 1 more dot for processing = 2 dots total
         }
         FetcherStep::GetTileDataLow => {
+            sleep(1).await;
             execute_get_tile_data_low().await; // Includes 1 dot for VRAM read
-            sleep(1).await; // 1 more dot for processing = 2 dots total
         }
         FetcherStep::GetTileDataHigh => {
+            sleep(1).await;
             execute_get_tile_data_high().await; // Includes 1 dot for VRAM read
-            sleep(1).await; // 1 more dot for processing = 2 dots total
         }
         FetcherStep::Push => {
             // Push step is attempted every dot until it succeeds
-            execute_push().await;
-            sleep(2).await; // Always takes at least 1 dot
+            sleep(1).await;
+            let pushed = execute_push().await;
+            // If push didn't succeed then return without advancing fetcher.
+            if !pushed {
+                return;
+            }
+            sleep(1).await;
         }
     }
 
