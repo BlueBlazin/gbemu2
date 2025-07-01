@@ -1113,47 +1113,97 @@ async fn execute_scf() {
 async fn execute_daa() {
     // DAA - 1 M-cycle total
     // Decimal adjust accumulator
+
+    // Code copied from: https://github.com/LIJI32/SameBoy/blob/master/Core/sm83_cpu.c
     with_state_mut(|state| {
-        let mut result = state.cpu.a as i16;
+        let mut result = state.cpu.af() >> 8;
 
-        // Clear Z and C flags initially (equivalent to clearing 0xFF00 | GB_ZERO_FLAG)
-        // Note: H flag is always cleared at the end, N flag is preserved
+        state
+            .cpu
+            .set_af(state.cpu.af() & !(0xFF00 | (state.cpu.flag_z() as u16)));
 
-        if state.cpu.flag_n() {
-            // Previous operation was subtraction
-            if state.cpu.flag_h() {
+        if (state.cpu.af() & (state.cpu.flag_n() as u16)) != 0 {
+            if (state.cpu.af() & (state.cpu.flag_h() as u16)) != 0 {
                 result = (result - 0x06) & 0xFF;
             }
-            if state.cpu.flag_c() {
+
+            if (state.cpu.af() & (state.cpu.flag_c() as u16)) != 0 {
                 result -= 0x60;
             }
         } else {
-            // Previous operation was addition
-            if state.cpu.flag_h() || (result & 0x0F) > 0x09 {
+            if ((state.cpu.af() & (state.cpu.flag_h() as u16)) != 0) || ((result & 0x0F) > 0x09) {
                 result += 0x06;
             }
-            if state.cpu.flag_c() || result > 0x9F {
+
+            if ((state.cpu.af() & (state.cpu.flag_c() as u16)) != 0) || (result > 0x9F) {
                 result += 0x60;
             }
         }
 
-        // Set Z flag if result is zero
-        let zero_flag = (result & 0xFF) == 0;
+        if (result & 0xFF) == 0 {
+            state
+                .cpu
+                .set_af(state.cpu.af() | (state.cpu.flag_z() as u16));
+        }
 
-        // Set C flag if there was overflow (bit 8 set)
-        let carry_flag = (result & 0x100) == 0x100;
+        if (result & 0x100) == 0x100 {
+            state
+                .cpu
+                .set_af(state.cpu.af() | (state.cpu.flag_c() as u16));
+        }
 
-        // Always clear H flag
-        let half_carry_flag = false;
+        state
+            .cpu
+            .set_af(state.cpu.af() & !(state.cpu.flag_h() as u16));
 
-        // Update A register and flags
-        state.cpu.a = (result & 0xFF) as u8;
-        state.cpu.set_flag_z(zero_flag);
-        state.cpu.set_flag_h(half_carry_flag);
-        state.cpu.set_flag_c(carry_flag);
-        // N flag is preserved (not modified)
+        state.cpu.set_af(state.cpu.af() | (result << 8));
     });
 }
+
+// async fn execute_daa() {
+//     // DAA - 1 M-cycle total
+//     // Decimal adjust accumulator
+//     with_state_mut(|state| {
+//         let mut result = state.cpu.a as i16;
+
+//         // Clear Z and C flags initially (equivalent to clearing 0xFF00 | GB_ZERO_FLAG)
+//         // Note: H flag is always cleared at the end, N flag is preserved
+
+//         if state.cpu.flag_n() {
+//             // Previous operation was subtraction
+//             if state.cpu.flag_h() {
+//                 result = (result - 0x06) & 0xFF;
+//             }
+//             if state.cpu.flag_c() {
+//                 result -= 0x60;
+//             }
+//         } else {
+//             // Previous operation was addition
+//             if state.cpu.flag_h() || (result & 0x0F) > 0x09 {
+//                 result += 0x06;
+//             }
+//             if state.cpu.flag_c() || result > 0x9F {
+//                 result += 0x60;
+//             }
+//         }
+
+//         // Set Z flag if result is zero
+//         let zero_flag = (result & 0xFF) == 0;
+
+//         // Set C flag if there was overflow (bit 8 set)
+//         let carry_flag = (result & 0x100) == 0x100;
+
+//         // Always clear H flag
+//         let half_carry_flag = false;
+
+//         // Update A register and flags
+//         state.cpu.a = (result & 0xFF) as u8;
+//         state.cpu.set_flag_z(zero_flag);
+//         state.cpu.set_flag_h(half_carry_flag);
+//         state.cpu.set_flag_c(carry_flag);
+//         // N flag is preserved (not modified)
+//     });
+// }
 
 async fn execute_cpl() {
     // CPL - 1 M-cycle total
