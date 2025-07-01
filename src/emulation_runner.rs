@@ -113,8 +113,9 @@ impl EmulationRunner {
         let mut remaining_cycles = CYCLES_PER_FRAME;
         let mut total_cycles_this_frame = 0;
 
-        // Keep running until we've executed all cycles for this frame
-        while remaining_cycles > 0 {
+        // Keep running until MaxCycles event. MaxCycles event doesn't guarantee CYCLES_PER_FRAME
+        // number of cycles were run but rather that running any more cycles would've crossed that boundry.
+        loop {
             // Run for the remaining cycles
             let result = self.driver.run_for(remaining_cycles);
 
@@ -136,12 +137,10 @@ impl EmulationRunner {
                 }
                 Event::MaxCycles => {
                     // We've executed all requested cycles
-                    break;
+                    return Ok(total_cycles_this_frame);
                 }
             }
         }
-
-        Ok(total_cycles_this_frame)
     }
 
     fn print_debug_info(&self, frame_cycles: usize) {

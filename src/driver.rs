@@ -1,6 +1,6 @@
 use futures::task::Waker;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -83,6 +83,7 @@ pub fn emit_event(event: Event) {
 pub struct Driver {
     clock: usize,
     futures_queue: FutureQueue,
+    events_queue: VecDeque<Event>,
 }
 
 impl Default for Driver {
@@ -96,6 +97,7 @@ impl Driver {
         Self {
             clock: 0,
             futures_queue: BTreeMap::new(),
+            events_queue: VecDeque::new(),
         }
     }
 
@@ -114,28 +116,19 @@ impl Driver {
     }
 
     pub fn run_for(&mut self, max_cycles: usize) -> ExecutionResult {
+        // If any events are yet to be handled, do that first
+        if let Some(event) = self.events_queue.pop_front() {
+            // Exit early due to unhandled event
+            return ExecutionResult {
+                event,
+                cycles_executed: 0,
+            };
+        }
+
         let start_cycle = self.clock;
         let target_cycle = start_cycle + max_cycles;
 
-        // Clear any pending events
-        PENDING_EVENT.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
-
         while !self.futures_queue.is_empty() && self.clock < target_cycle {
-            // Check for pending events
-            let pending_event = PENDING_EVENT.with(|cell| *cell.borrow());
-            if let Some(event) = pending_event {
-                // Clear the event and return it
-                PENDING_EVENT.with(|cell| {
-                    *cell.borrow_mut() = None;
-                });
-                return ExecutionResult {
-                    event,
-                    cycles_executed: self.clock - start_cycle,
-                };
-            }
-
             let next_cycle = *self.futures_queue.keys().next().unwrap();
 
             // Don't exceed our cycle limit
@@ -176,15 +169,20 @@ impl Driver {
                 // Check for events after each future poll
                 let pending_event = PENDING_EVENT.with(|cell| *cell.borrow());
                 if let Some(event) = pending_event {
-                    // Clear the event and return it
+                    // Clear the event and add to queue
                     PENDING_EVENT.with(|cell| {
                         *cell.borrow_mut() = None;
                     });
-                    return ExecutionResult {
-                        event,
-                        cycles_executed: self.clock - start_cycle,
-                    };
+                    self.events_queue.push_back(event);
                 }
+            }
+
+            if let Some(event) = self.events_queue.pop_front() {
+                // Exit early due to unhandled event
+                return ExecutionResult {
+                    event,
+                    cycles_executed: self.clock - start_cycle,
+                };
             }
         }
 

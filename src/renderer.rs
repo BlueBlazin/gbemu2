@@ -124,7 +124,7 @@ impl Renderer {
 
         // Create main LCD window
         let main_window = video_subsystem
-            .window("GBEmu2 - LCD", main_width, main_height)
+            .window("LCD", main_width, main_height)
             .position(main_x, main_y)
             .build()
             .map_err(|e| e.to_string())?;
@@ -147,7 +147,7 @@ impl Renderer {
 
         // Create BG Tilemap 0 window
         let tilemap0_window = video_subsystem
-            .window("GBEmu2 - BG Tilemap 0", tilemap_width, tilemap_height)
+            .window("BG Tilemap 0", tilemap_width, tilemap_height)
             .position(tilemap0_x, tilemap0_y)
             .build()
             .map_err(|e| e.to_string())?;
@@ -173,7 +173,7 @@ impl Renderer {
 
         // Create BG Tilemap 1 window
         let tilemap1_window = video_subsystem
-            .window("GBEmu2 - BG Tilemap 1", tilemap_width, tilemap_height)
+            .window("BG Tilemap 1", tilemap_width, tilemap_height)
             .position(tilemap1_x, tilemap1_y)
             .build()
             .map_err(|e| e.to_string())?;
@@ -199,7 +199,7 @@ impl Renderer {
 
         // Create Tile Data window
         let tile_data_window = video_subsystem
-            .window("GBEmu2 - Tile Data", tile_data_width, tile_data_height)
+            .window("Tile Data", tile_data_width, tile_data_height)
             .position(tile_data_x, tile_data_y)
             .build()
             .map_err(|e| e.to_string())?;
@@ -221,7 +221,7 @@ impl Renderer {
 
         // Create Palettes window
         let palette_window = video_subsystem
-            .window("GBEmu2 - Palettes", palette_width, palette_height)
+            .window("Palettes", palette_width, palette_height)
             .position(palette_x, palette_y)
             .build()
             .map_err(|e| e.to_string())?;
