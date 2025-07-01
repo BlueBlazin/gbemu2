@@ -584,7 +584,6 @@ async fn execute_vblank_scanline() {
         request_vblank_interrupt();
 
         // Also emit VBlank event for host system
-        println!("Emiting VBlank");
         emit_event(Event::VBlank);
     }
 
