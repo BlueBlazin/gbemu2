@@ -1160,51 +1160,6 @@ async fn execute_daa() {
     });
 }
 
-// async fn execute_daa() {
-//     // DAA - 1 M-cycle total
-//     // Decimal adjust accumulator
-//     with_state_mut(|state| {
-//         let mut result = state.cpu.a as i16;
-
-//         // Clear Z and C flags initially (equivalent to clearing 0xFF00 | GB_ZERO_FLAG)
-//         // Note: H flag is always cleared at the end, N flag is preserved
-
-//         if state.cpu.flag_n() {
-//             // Previous operation was subtraction
-//             if state.cpu.flag_h() {
-//                 result = (result - 0x06) & 0xFF;
-//             }
-//             if state.cpu.flag_c() {
-//                 result -= 0x60;
-//             }
-//         } else {
-//             // Previous operation was addition
-//             if state.cpu.flag_h() || (result & 0x0F) > 0x09 {
-//                 result += 0x06;
-//             }
-//             if state.cpu.flag_c() || result > 0x9F {
-//                 result += 0x60;
-//             }
-//         }
-
-//         // Set Z flag if result is zero
-//         let zero_flag = (result & 0xFF) == 0;
-
-//         // Set C flag if there was overflow (bit 8 set)
-//         let carry_flag = (result & 0x100) == 0x100;
-
-//         // Always clear H flag
-//         let half_carry_flag = false;
-
-//         // Update A register and flags
-//         state.cpu.a = (result & 0xFF) as u8;
-//         state.cpu.set_flag_z(zero_flag);
-//         state.cpu.set_flag_h(half_carry_flag);
-//         state.cpu.set_flag_c(carry_flag);
-//         // N flag is preserved (not modified)
-//     });
-// }
-
 async fn execute_cpl() {
     // CPL - 1 M-cycle total
     // Complement accumulator, set N and H flags
