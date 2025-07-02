@@ -110,11 +110,11 @@ impl Renderer {
 
         // Tile data window (left of main LCD, moved up to account for title bar)
         let tile_data_x = main_x - tile_data_width as i32 - margin;
-        let tile_data_y = main_y - 30; // Move up to account for title bar
+        let tile_data_y = main_y - 30;
 
         // BG Tilemap windows (right of main LCD, stacked vertically)
         let tilemap0_x = main_x + main_width as i32 + margin;
-        let tilemap0_y = main_y - 30; // Move up to account for title bar
+        let tilemap0_y = main_y - 30;
 
         let tilemap1_x = tilemap0_x;
         let tilemap1_y = tilemap0_y + tilemap_height as i32 + margin + 30;

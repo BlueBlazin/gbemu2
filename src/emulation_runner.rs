@@ -69,35 +69,34 @@ impl EmulationRunner {
                 std::thread::sleep(self.target_frame_duration - frame_duration);
             }
 
-            // Update FPS every second
-            let now = Instant::now();
-            if now.duration_since(last_fps_time) >= Duration::from_secs(1) {
-                stats.fps = fps_frame_count as f64;
-                println!(
-                    "FPS: {:.1}, Total frames: {}, Total cycles: {}",
-                    stats.fps, stats.frame_count, stats.total_cycles
-                );
-                last_fps_time = now;
-                fps_frame_count = 0;
-            }
-
-            // Debug output every few seconds
-            if now.duration_since(last_debug_time) >= Duration::from_secs(5) {
-                self.print_debug_info(cycles_executed);
-                last_debug_time = now;
-            }
-
-            // Save screenshot after 5 seconds in debug mode
-            if debug_mode
-                && !screenshot_taken
-                && now.duration_since(start_time) >= Duration::from_secs(5)
-            {
-                if let Err(e) = self.save_screenshot() {
-                    println!("Warning: Failed to save screenshot: {}", e);
-                } else {
-                    println!("Debug: Screenshot saved");
+            if debug_mode {
+                // Update FPS every second
+                let now = Instant::now();
+                if now.duration_since(last_fps_time) >= Duration::from_secs(1) {
+                    stats.fps = fps_frame_count as f64;
+                    println!(
+                        "FPS: {:.1}, Total frames: {}, Total cycles: {}",
+                        stats.fps, stats.frame_count, stats.total_cycles
+                    );
+                    last_fps_time = now;
+                    fps_frame_count = 0;
                 }
-                screenshot_taken = true;
+
+                // Debug output every few seconds
+                if now.duration_since(last_debug_time) >= Duration::from_secs(5) {
+                    self.print_debug_info(cycles_executed);
+                    last_debug_time = now;
+                }
+
+                // Save screenshot after 5 seconds in debug mode
+                if !screenshot_taken && now.duration_since(start_time) >= Duration::from_secs(5) {
+                    if let Err(e) = self.save_screenshot() {
+                        println!("Warning: Failed to save screenshot: {}", e);
+                    } else {
+                        println!("Debug: Screenshot saved");
+                    }
+                    screenshot_taken = true;
+                }
             }
         }
 
