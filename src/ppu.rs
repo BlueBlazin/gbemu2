@@ -558,7 +558,7 @@ async fn execute_visible_scanline() {
     with_state_mut(|state| state.ppu.dots = 0);
 
     // Mode 2: OAM Scan (80 dots)
-    execute_oam_scan().await;
+    // execute_oam_scan().await;
 
     // Mode 3: Drawing (172-289 dots, variable based on penalties)
     execute_drawing().await;
@@ -605,28 +605,6 @@ async fn execute_vblank_scanline() {
     sleep_dots(DOTS_PER_SCANLINE).await;
 }
 
-async fn execute_oam_scan() {
-    // Set mode to OAM scan
-    let should_trigger_stat = with_state_mut(|state| {
-        state.ppu.set_mode(MODE_OAM_SCAN);
-        state.ppu.update_lyc_ly_flag();
-        state.ppu.should_trigger_stat_interrupt()
-    });
-
-    // Trigger STAT interrupt if conditions are met
-    if should_trigger_stat {
-        request_lcd_interrupt();
-    }
-
-    // Scan OAM for objects on current scanline
-    let _selected_objects = scan_oam_for_objects().await;
-
-    // TODO: Store selected objects for use in drawing mode
-
-    // Wait for OAM scan duration
-    sleep_dots(OAM_SCAN_DOTS).await;
-}
-
 async fn execute_drawing() {
     // Set mode to drawing
     with_state_mut(|state| {
@@ -656,39 +634,6 @@ async fn execute_hblank() {
 
     // Wait for HBlank duration
     sleep_dots(hblank_dots).await;
-}
-
-async fn scan_oam_for_objects() -> Vec<SelectedObject> {
-    let mut selected_objects = Vec::new();
-    let ly = with_state(|state| state.ppu.ly);
-    let obj_size = with_state(|state| state.ppu.obj_size());
-    let obj_height = if obj_size { 16 } else { 8 };
-
-    // Scan all 40 OAM entries
-    for i in 0..40 {
-        let oam_entry = with_state(|state| state.ppu.oam[i]);
-
-        // Check if object is on current scanline
-        let obj_y = oam_entry.y.wrapping_sub(16);
-        if ly >= obj_y && ly < obj_y.wrapping_add(obj_height) {
-            selected_objects.push(SelectedObject {
-                oam_index: i as u8,
-                x: oam_entry.x,
-                y: oam_entry.y,
-                tile_index: oam_entry.tile_index,
-                attributes: oam_entry.attributes,
-            });
-
-            // Maximum 10 objects per scanline
-            if selected_objects.len() >= 10 {
-                break;
-            }
-        }
-    }
-
-    // No sorting - objects are selected in OAM order (first 10 matching)
-    // Drawing priority is handled differently during rendering
-    selected_objects
 }
 
 async fn render_scanline() {
