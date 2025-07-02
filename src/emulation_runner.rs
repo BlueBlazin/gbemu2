@@ -128,7 +128,6 @@ impl EmulationRunner {
             // Handle events
             match result.event {
                 Event::VBlank => {
-                    println!("VBlank");
                     // Render the frame when PPU signals VBlank
                     self.renderer.render_frame()?;
                 }

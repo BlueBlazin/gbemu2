@@ -99,28 +99,29 @@ impl Renderer {
         let palette_height = 100;
         let margin = 10;
 
-        // Position calculations - arrange windows in a grid
+        // Position calculations - arrange windows as requested:
+        // Main LCD in center, BG tilemaps stacked on right, Tile data on left, Palettes below tile data
         let center_x = display_bounds.width() as i32 / 2;
-        let _center_y = display_bounds.height() as i32 / 2;
+        let center_y = display_bounds.height() as i32 / 2;
 
-        // Main LCD window (top center)
+        // Main LCD window (center)
         let main_x = center_x - (main_width as i32 / 2);
-        let main_y = margin;
+        let main_y = center_y - (main_height as i32 / 2);
 
-        // Tilemap windows (below main, side by side)
-        let tilemap0_x = center_x - tilemap_width as i32 - margin / 2;
-        let tilemap0_y = main_y + main_height as i32 + margin;
+        // Tile data window (left of main LCD, moved up to account for title bar)
+        let tile_data_x = main_x - tile_data_width as i32 - margin;
+        let tile_data_y = main_y - 30; // Move up to account for title bar
 
-        let tilemap1_x = center_x + margin / 2;
-        let tilemap1_y = tilemap0_y;
+        // BG Tilemap windows (right of main LCD, stacked vertically)
+        let tilemap0_x = main_x + main_width as i32 + margin;
+        let tilemap0_y = main_y - 30; // Move up to account for title bar
 
-        // Tile data window (below tilemaps, left)
-        let tile_data_x = tilemap0_x;
-        let tile_data_y = tilemap0_y + tilemap_height as i32 + margin;
+        let tilemap1_x = tilemap0_x;
+        let tilemap1_y = tilemap0_y + tilemap_height as i32 + margin + 30;
 
-        // Palette window (below tilemaps, right)
-        let palette_x = tilemap1_x;
-        let palette_y = tile_data_y;
+        // Palette window (below tile data)
+        let palette_x = tile_data_x;
+        let palette_y = tile_data_y + tile_data_height as i32 + margin + 30;
 
         // Create main LCD window
         let main_window = video_subsystem
