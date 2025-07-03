@@ -370,12 +370,14 @@ const MODE_OAM_SCAN: u8 = 2;
 const MODE_DRAWING: u8 = 3;
 
 // Pixel FIFO data structures
+// The PPU maintains two FIFOs: one for background/window pixels and one for object pixels
+// These are mixed during rendering to produce the final output
 #[derive(Debug, Clone, Copy)]
 pub struct PixelData {
     pub color: u8,           // 0-3
     pub palette: bool,       // Object palette (OBP0=false, OBP1=true)
-    pub bg_priority: bool,   // Background priority flag
-    pub object_priority: u8, // For object priority sorting (lower = higher priority)
+    pub bg_priority: bool,   // Background priority flag (from OAM attributes)
+    pub object_priority: u8, // OAM index for priority sorting (lower = higher priority)
 }
 
 impl PixelData {
@@ -509,6 +511,8 @@ pub struct PpuRenderState {
     pub window_triggered: bool,
     pub scx_discard_count: u8,
     pub mode_3_penalty: u16,
+    pub fetched_objects: Vec<u8>, // Track which objects have been fetched
+    pub obj_fifo_valid: bool,      // Track if object FIFO contains valid data
 }
 
 impl PpuRenderState {
@@ -522,6 +526,8 @@ impl PpuRenderState {
             window_triggered: false,
             scx_discard_count: 0,
             mode_3_penalty: 0,
+            fetched_objects: Vec::new(),
+            obj_fifo_valid: false,
         }
     }
 
@@ -534,6 +540,8 @@ impl PpuRenderState {
         self.window_triggered = false;
         self.scx_discard_count = 0;
         self.mode_3_penalty = 0;
+        self.fetched_objects.clear();
+        self.obj_fifo_valid = false;
     }
 }
 
@@ -773,6 +781,13 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
         // Handle objects at current pixel position
         let obj_penalty = handle_objects_at_pixel(render_state).await;
         dots_spent += obj_penalty;
+        
+        // If we have a valid object FIFO but it's empty, we need to refill it
+        if render_state.obj_fifo_valid && render_state.obj_fifo.is_empty() {
+            for _ in 0..8 {
+                render_state.obj_fifo.push(PixelData::new());
+            }
+        }
 
         // Render pixel if FIFOs have data
         if can_render_pixel(render_state) {
@@ -819,6 +834,10 @@ async fn trigger_window(render_state: &mut PpuRenderState) {
     render_state.bg_fifo.clear();
     render_state.fetcher.reset();
     render_state.fetcher.is_window = true;
+
+    // When window triggers, we also need to reset object FIFO state
+    render_state.obj_fifo.clear();
+    render_state.obj_fifo_valid = false;
 
     with_state_mut(|state| {
         render_state.fetcher.window_line = state.ppu.window_line;
@@ -970,26 +989,33 @@ fn try_push_pixels(render_state: &mut PpuRenderState) -> bool {
 
 async fn handle_objects_at_pixel(render_state: &mut PpuRenderState) -> u16 {
     let mut penalty = 0;
-
-    // Find first object at current pixel
-    let mut target_obj: Option<ObjectData> = None;
-    for obj in &render_state.objects_on_line {
+    
+    // Find object to fetch at current position
+    let mut object_to_fetch: Option<(usize, ObjectData)> = None;
+    
+    for (idx, obj) in render_state.objects_on_line.iter().enumerate() {
         let obj_x = obj.x as i16 - 8;
-        if obj_x <= render_state.pixel_x as i16 && obj_x + 8 > render_state.pixel_x as i16 {
-            target_obj = Some(obj.clone());
-            break; // Only handle one object per pixel
+        
+        // Check if we've reached this object's X position and haven't fetched it yet
+        if obj_x == render_state.pixel_x as i16 && !render_state.fetched_objects.contains(&(idx as u8)) {
+            object_to_fetch = Some((idx, obj.clone()));
+            break;
         }
     }
-
-    // Handle the object if found
-    if let Some(obj) = target_obj {
-        penalty += fetch_object_pixels(render_state, &obj).await;
+    
+    // Fetch the object if we found one
+    if let Some((idx, obj)) = object_to_fetch {
+        // Mark as fetched
+        render_state.fetched_objects.push(idx as u8);
+        
+        // Fetch this object's pixels
+        penalty += fetch_object_pixels(render_state, &obj, idx).await;
     }
 
     penalty
 }
 
-async fn fetch_object_pixels(render_state: &mut PpuRenderState, obj: &ObjectData) -> u16 {
+async fn fetch_object_pixels(render_state: &mut PpuRenderState, obj: &ObjectData, _obj_index: usize) -> u16 {
     let mut penalty = 6; // Base object penalty
 
     // Special case: object at X=0
@@ -1054,49 +1080,57 @@ async fn fetch_object_pixels(render_state: &mut PpuRenderState, obj: &ObjectData
         }
     });
 
-    // Fill object FIFO if needed
-    while render_state.obj_fifo.len() < 8 {
-        render_state.obj_fifo.push(PixelData::new());
+    // If object FIFO doesn't have valid data, initialize it
+    if !render_state.obj_fifo_valid {
+        render_state.obj_fifo.clear();
+        // Fill with transparent pixels
+        for _ in 0..8 {
+            render_state.obj_fifo.push(PixelData::new());
+        }
+        render_state.obj_fifo_valid = true;
     }
 
     // Mix object pixels into object FIFO
     let obj_x = obj.x as i16 - 8;
-    let start_pixel = if obj_x < render_state.pixel_x as i16 {
-        (render_state.pixel_x as i16 - obj_x) as usize
-    } else {
-        0
-    };
+    
+    // Calculate which pixels of the sprite should be mixed into the FIFO
+    for i in 0..8 {
+        let screen_x = obj_x + i as i16;
+        
+        // Skip pixels that are off-screen or before current pixel position
+        if screen_x < 0 || screen_x >= 160 {
+            continue;
+        }
+        
+        // Calculate FIFO position for this pixel
+        let fifo_pos = screen_x - render_state.pixel_x as i16;
+        if fifo_pos < 0 || fifo_pos >= 8 {
+            continue;
+        }
+        
+        let pixel_bit = if (obj.attributes & 0x20) != 0 {
+            // X flip
+            i
+        } else {
+            7 - i
+        };
 
-    for i in start_pixel..8 {
-        if (obj_x + i as i16) >= render_state.pixel_x as i16
-            && (obj_x + i as i16)
-                < (render_state.pixel_x as i16 + render_state.obj_fifo.len() as i16)
-        {
-            let pixel_bit = if (obj.attributes & 0x20) != 0 {
-                // X flip
-                i
-            } else {
-                7 - i
-            };
+        let color = ((tile_data_high >> pixel_bit) & 1) << 1 | ((tile_data_low >> pixel_bit) & 1);
 
-            let color =
-                ((tile_data_high >> pixel_bit) & 1) << 1 | ((tile_data_low >> pixel_bit) & 1);
+        if color != 0 {
+            // Only non-transparent pixels
+            let fifo_index = fifo_pos as usize;
+            if fifo_index < render_state.obj_fifo.pixels.len() {
+                let current_pixel = &render_state.obj_fifo.pixels[fifo_index];
 
-            if color != 0 {
-                // Only non-transparent pixels
-                let fifo_index = (obj_x + i as i16 - render_state.pixel_x as i16) as usize;
-                if fifo_index < render_state.obj_fifo.len() {
-                    let current_pixel = &render_state.obj_fifo.pixels[fifo_index];
-
-                    // Replace if current pixel is transparent or has lower priority
-                    if current_pixel.color == 0 || obj.oam_index < current_pixel.object_priority {
-                        render_state.obj_fifo.pixels[fifo_index] = PixelData::obj_pixel(
-                            color,
-                            (obj.attributes & 0x10) != 0, // Palette
-                            (obj.attributes & 0x80) != 0, // BG priority
-                            obj.oam_index,
-                        );
-                    }
+                // Replace if current pixel is transparent or has lower priority (lower OAM index = higher priority)
+                if current_pixel.color == 0 || obj.oam_index < current_pixel.object_priority {
+                    render_state.obj_fifo.pixels[fifo_index] = PixelData::obj_pixel(
+                        color,
+                        (obj.attributes & 0x10) != 0, // Palette
+                        (obj.attributes & 0x80) != 0, // BG priority
+                        obj.oam_index,
+                    );
                 }
             }
         }
@@ -1111,13 +1145,28 @@ fn can_render_pixel(render_state: &PpuRenderState) -> bool {
 }
 
 async fn render_pixel(render_state: &mut PpuRenderState) {
-    // Pop pixels from both FIFOs
+    // Pop pixel from background FIFO
     let bg_pixel = render_state.bg_fifo.pop().unwrap_or(PixelData::bg_pixel(0));
-    let obj_pixel = render_state.obj_fifo.pop().unwrap_or(PixelData::new());
+    
+    // Get object pixel from FIFO (only pop if we have valid object data)
+    let obj_pixel = if render_state.obj_fifo_valid && !render_state.obj_fifo.is_empty() {
+        render_state.obj_fifo.pop().unwrap_or(PixelData::new())
+    } else {
+        PixelData::new()
+    };
 
     // Handle SCX discard
     if render_state.scx_discard_count > 0 {
         render_state.scx_discard_count -= 1;
+        
+        // If object FIFO is valid, we need to keep it synchronized
+        if render_state.obj_fifo_valid && render_state.obj_fifo.is_empty() {
+            // Refill object FIFO with transparent pixels to maintain alignment
+            for _ in 0..8 {
+                render_state.obj_fifo.push(PixelData::new());
+            }
+        }
+        
         return; // Don't render this pixel
     }
 
@@ -1154,6 +1203,11 @@ async fn render_pixel(render_state: &mut PpuRenderState) {
 
         final_color
     });
+
+    // If object FIFO is empty and was valid, invalidate it
+    if render_state.obj_fifo_valid && render_state.obj_fifo.is_empty() {
+        render_state.obj_fifo_valid = false;
+    }
 
     sleep_dots(1).await;
 }

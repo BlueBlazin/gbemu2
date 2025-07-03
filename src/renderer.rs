@@ -64,6 +64,7 @@ enum DebugWindowType {
     BgTilemap1,
     TileData,
     Palettes,
+    SpriteTiles,
 }
 
 struct DebugWindow {
@@ -125,6 +126,13 @@ impl Renderer {
 
         let tilemap1_x = tilemap0_x;
         let tilemap1_y = tilemap0_y + tilemap_height as i32 + margin + 30;
+
+        // Sprite Tiles window (right of BG tilemaps) - 10x4 grid at 2x scale
+        let sprite_tiles_scale = 2;
+        let sprite_tiles_width = 4 * TILE_SIZE * sprite_tiles_scale; // 4 sprites wide at 2x scale
+        let sprite_tiles_height = 10 * TILE_SIZE * sprite_tiles_scale; // 10 sprites tall at 2x scale
+        let sprite_tiles_x = tilemap0_x + tilemap_width as i32 + margin;
+        let sprite_tiles_y = tilemap0_y;
 
         // Palette window (below tile data)
         let palette_x = tile_data_x;
@@ -250,6 +258,28 @@ impl Renderer {
             },
         );
 
+        // Create Sprite Tiles window
+        let sprite_tiles_window = video_subsystem
+            .window("Sprite Tiles", sprite_tiles_width, sprite_tiles_height)
+            .position(sprite_tiles_x, sprite_tiles_y)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let sprite_tiles_canvas = sprite_tiles_window
+            .into_canvas()
+            .build()
+            .map_err(|e| e.to_string())?;
+        let texture_creator = sprite_tiles_canvas.texture_creator();
+        let sprite_tiles_texture = texture_creator
+            .create_texture_streaming(PixelFormatEnum::RGB24, 4 * TILE_SIZE, 10 * TILE_SIZE)
+            .map_err(|e| e.to_string())?;
+        windows.insert(
+            DebugWindowType::SpriteTiles,
+            DebugWindow {
+                canvas: sprite_tiles_canvas,
+                texture: unsafe { std::mem::transmute(sprite_tiles_texture) },
+            },
+        );
+
         // Pre-calculate grid line coordinates (offset by border)
         let mut grid_lines = Vec::new();
         let border_h = border_horizontal as i32;
@@ -291,6 +321,7 @@ impl Renderer {
         self.render_tilemap(DebugWindowType::BgTilemap1)?;
         self.render_tile_data()?;
         self.render_palettes()?;
+        self.render_sprite_tiles()?;
 
         Ok(())
     }
@@ -670,6 +701,151 @@ impl Renderer {
         window
             .canvas
             .copy(&window.texture, None, None)
+            .map_err(|e| e.to_string())?;
+        window.canvas.present();
+
+        Ok(())
+    }
+
+    fn render_sprite_tiles(&mut self) -> Result<(), String> {
+        let window = self
+            .windows
+            .get_mut(&DebugWindowType::SpriteTiles)
+            .ok_or("Sprite tiles window not found")?;
+
+        // Get sprite tile data from PPU
+        let sprite_data = with_state(|state| {
+            let mut data = [[0u8; 4 * 8]; 10 * 8]; // 4x10 sprites, 8x8 pixels each
+            let obj_size = state.ppu.obj_size(); // false = 8x8, true = 8x16
+
+            // Render all 40 sprites (OAM entries)
+            for sprite_idx in 0..40 {
+                let sprite_x = sprite_idx % 4;
+                let sprite_y = sprite_idx / 4;
+
+                if sprite_y >= 10 {
+                    break; // Only display first 40 sprites in 4x10 grid
+                }
+
+                let oam_entry = &state.ppu.oam[sprite_idx];
+                let tile_index = oam_entry.tile_index;
+                let x_flip = oam_entry.x_flip();
+                let y_flip = oam_entry.y_flip();
+                let use_obp1 = oam_entry.dmg_palette();
+
+                // Select the appropriate palette
+                let palette = if use_obp1 {
+                    state.ppu.obp1
+                } else {
+                    state.ppu.obp0
+                };
+
+                // For 8x16 sprites, we need to handle two tiles
+                let tiles_to_render = if obj_size { 2 } else { 1 };
+
+                for tile_offset in 0..tiles_to_render {
+                    // Calculate actual tile index for 8x16 mode
+                    let actual_tile_index = if obj_size {
+                        // In 8x16 mode, bit 0 of tile index is ignored
+                        // Top tile is tile_index & 0xFE, bottom tile is tile_index | 0x01
+                        if tile_offset == 0 {
+                            (tile_index & 0xFE) as usize
+                        } else {
+                            (tile_index | 0x01) as usize
+                        }
+                    } else {
+                        tile_index as usize
+                    };
+
+                    // Get tile data
+                    for line in 0..8 {
+                        // Apply Y flip if needed
+                        let actual_line = if y_flip {
+                            if obj_size {
+                                // For 8x16 sprites, flip across the entire 16 pixel height
+                                let total_line = tile_offset * 8 + line;
+                                let flipped_total = 15 - total_line;
+                                flipped_total % 8
+                            } else {
+                                7 - line
+                            }
+                        } else {
+                            line
+                        };
+
+                        // For 8x16 sprites with Y flip, we also need to swap the tiles
+                        let tile_to_use = if obj_size && y_flip {
+                            // When Y-flipped, the bottom tile becomes the top tile
+                            if tile_offset == 0 {
+                                (tile_index | 0x01) as usize
+                            } else {
+                                (tile_index & 0xFE) as usize
+                            }
+                        } else {
+                            actual_tile_index
+                        };
+
+                        let byte1 = state.ppu.vram[tile_to_use][actual_line * 2];
+                        let byte2 = state.ppu.vram[tile_to_use][actual_line * 2 + 1];
+
+                        for pixel in 0..8 {
+                            // Apply X flip if needed
+                            let bit = if x_flip { pixel } else { 7 - pixel };
+                            let color_num = ((byte2 >> bit) & 1) << 1 | ((byte1 >> bit) & 1);
+
+                            // Apply palette (note: color 0 is transparent for sprites)
+                            let color = if color_num == 0 {
+                                0 // Keep as transparent (we'll render as lightest color)
+                            } else {
+                                (palette >> (color_num * 2)) & 0b11
+                            };
+
+                            let x = sprite_x * 8 + pixel;
+                            let y = sprite_y * 8
+                                + (if obj_size {
+                                    tile_offset * 8 + line
+                                } else {
+                                    line
+                                });
+
+                            // Only render if within bounds (for 8x16 sprites)
+                            if y < 10 * 8 {
+                                data[y][x] = color;
+                            }
+                        }
+                    }
+                }
+            }
+
+            data
+        });
+
+        // Convert to RGB and render
+        window
+            .texture
+            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                for y in 0..(10 * 8) {
+                    for x in 0..(4 * 8) {
+                        let color_index = sprite_data[y][x] as usize;
+                        let (r, g, b) = COLORS[color_index.min(3)];
+
+                        let offset = y * pitch + x * 3;
+                        buffer[offset] = r;
+                        buffer[offset + 1] = g;
+                        buffer[offset + 2] = b;
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+
+        window.canvas.clear();
+        window
+            .canvas
+            .copy(
+                &window.texture,
+                None,
+                None, // Scale to fill entire window
+            )
             .map_err(|e| e.to_string())?;
         window.canvas.present();
 
