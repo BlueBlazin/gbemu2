@@ -1,5 +1,5 @@
 use crate::emulator::with_state;
-use crate::texture_pool::{TexturePool, TexturePoolConfig, TextureKey, TextureId};
+use crate::texture_pool::{TextureId, TextureKey, TexturePool, TexturePoolConfig};
 use sdl2::event::Event as SdlEvent;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -166,7 +166,7 @@ impl Renderer {
             .build()
             .map_err(|e| e.to_string())?;
         let texture_creator = main_canvas.texture_creator();
-        
+
         // Create texture pool with custom configuration for main LCD
         let texture_pool_config = TexturePoolConfig {
             max_pool_size: 10,
@@ -256,11 +256,8 @@ impl Renderer {
             .map_err(|e| e.to_string())?;
         let texture_creator = tile_data_canvas.texture_creator();
         let tile_data_texture_pool = TexturePool::new(texture_creator, texture_pool_config.clone());
-        let tile_data_texture_key = TextureKey::new(
-            16 * TILE_SIZE,
-            24 * TILE_SIZE,
-            PixelFormatEnum::RGB24,
-        );
+        let tile_data_texture_key =
+            TextureKey::new(16 * TILE_SIZE, 24 * TILE_SIZE, PixelFormatEnum::RGB24);
         windows.insert(
             DebugWindowType::TileData,
             DebugWindow {
@@ -284,11 +281,8 @@ impl Renderer {
             .map_err(|e| e.to_string())?;
         let texture_creator = palette_canvas.texture_creator();
         let palette_texture_pool = TexturePool::new(texture_creator, texture_pool_config.clone());
-        let palette_texture_key = TextureKey::new(
-            palette_width,
-            palette_height,
-            PixelFormatEnum::RGB24,
-        );
+        let palette_texture_key =
+            TextureKey::new(palette_width, palette_height, PixelFormatEnum::RGB24);
         windows.insert(
             DebugWindowType::Palettes,
             DebugWindow {
@@ -311,12 +305,10 @@ impl Renderer {
             .build()
             .map_err(|e| e.to_string())?;
         let texture_creator = sprite_tiles_canvas.texture_creator();
-        let sprite_tiles_texture_pool = TexturePool::new(texture_creator, texture_pool_config.clone());
-        let sprite_tiles_texture_key = TextureKey::new(
-            4 * TILE_SIZE,
-            10 * TILE_SIZE,
-            PixelFormatEnum::RGB24,
-        );
+        let sprite_tiles_texture_pool =
+            TexturePool::new(texture_creator, texture_pool_config.clone());
+        let sprite_tiles_texture_key =
+            TextureKey::new(4 * TILE_SIZE, 10 * TILE_SIZE, PixelFormatEnum::RGB24);
         windows.insert(
             DebugWindowType::SpriteTiles,
             DebugWindow {
@@ -389,20 +381,24 @@ impl Renderer {
 
         // Note: Dirty flags are cleared by the emulation runner after successful rendering
         // This ensures that if rendering fails, the flags remain dirty for retry
-        
+
         Ok(())
     }
 
     /// Ensure a texture is allocated for the given window
     fn ensure_texture_allocated(&mut self, window_type: DebugWindowType) -> Result<(), String> {
-        let window = self.windows.get_mut(&window_type)
+        let window = self
+            .windows
+            .get_mut(&window_type)
             .ok_or_else(|| format!("{:?} window not found", window_type))?;
 
         if window.texture_id.is_none() || window.needs_texture_allocation {
             // Allocate a new texture from the window's pool
-            let texture_id = window.texture_pool.get_texture(window.texture_key)
+            let texture_id = window
+                .texture_pool
+                .get_texture(window.texture_key)
                 .map_err(|e| format!("Failed to allocate texture for {:?}: {}", window_type, e))?;
-            
+
             window.texture_id = Some(texture_id);
             window.needs_texture_allocation = false;
         }
@@ -411,38 +407,57 @@ impl Renderer {
     }
 
     /// Get a mutable reference to the texture for a window
-    fn get_window_texture_mut(&mut self, window_type: DebugWindowType) -> Result<&mut crate::texture_pool::PooledTexture, String> {
+    fn get_window_texture_mut(
+        &mut self,
+        window_type: DebugWindowType,
+    ) -> Result<&mut crate::texture_pool::PooledTexture, String> {
         self.ensure_texture_allocated(window_type)?;
-        
-        let window = self.windows.get_mut(&window_type)
+
+        let window = self
+            .windows
+            .get_mut(&window_type)
             .ok_or_else(|| format!("{:?} window not found", window_type))?;
-        
-        let texture_id = window.texture_id
+
+        let texture_id = window
+            .texture_id
             .ok_or_else(|| format!("{:?} window has no texture allocated", window_type))?;
-        
-        window.texture_pool.get_texture_mut(texture_id)
+
+        window
+            .texture_pool
+            .get_texture_mut(texture_id)
             .ok_or_else(|| format!("Texture {:?} not found in pool", texture_id))
     }
 
     /// Get a reference to the texture for a window
-    fn get_window_texture(&mut self, window_type: DebugWindowType) -> Result<&crate::texture_pool::PooledTexture, String> {
+    fn get_window_texture(
+        &mut self,
+        window_type: DebugWindowType,
+    ) -> Result<&crate::texture_pool::PooledTexture, String> {
         self.ensure_texture_allocated(window_type)?;
-        
-        let window = self.windows.get_mut(&window_type)
+
+        let window = self
+            .windows
+            .get_mut(&window_type)
             .ok_or_else(|| format!("{:?} window not found", window_type))?;
-        
-        let texture_id = window.texture_id
+
+        let texture_id = window
+            .texture_id
             .ok_or_else(|| format!("{:?} window has no texture allocated", window_type))?;
-        
-        window.texture_pool.get_texture_ref(texture_id)
+
+        window
+            .texture_pool
+            .get_texture_ref(texture_id)
             .ok_or_else(|| format!("Texture {:?} not found in pool", texture_id))
     }
 
     /// Get texture pool statistics (aggregated from all windows)
-    pub fn get_texture_pool_stats(&self) -> Vec<(DebugWindowType, crate::texture_pool::TexturePoolStats)> {
-        self.windows.iter().map(|(window_type, window)| {
-            (*window_type, window.texture_pool.get_stats())
-        }).collect()
+    pub fn get_texture_pool_stats(
+        &self,
+    ) -> Vec<(DebugWindowType, crate::texture_pool::TexturePoolStats)> {
+        self.windows
+            .iter()
+            .map(|(window_type, window)| (*window_type, window.texture_pool.get_stats()))
+            .collect()
     }
 
     /// Force cleanup of unused textures for all windows
@@ -455,7 +470,7 @@ impl Renderer {
     fn render_main_lcd(&mut self) -> Result<(), String> {
         // Ensure texture is allocated
         self.ensure_texture_allocated(DebugWindowType::MainLcd)?;
-        
+
         let window = self
             .windows
             .get_mut(&DebugWindowType::MainLcd)
@@ -474,14 +489,18 @@ impl Renderer {
         });
 
         // Get texture from pool
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Main LCD window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_mut(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_mut(texture_id)
             .ok_or("Main LCD texture not found in pool")?;
 
         // Convert Game Boy 2-bit colors to RGB
-        pooled_texture.texture_mut()
+        pooled_texture
+            .texture_mut()
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 for y in 0..GB_HEIGHT as usize {
                     for x in 0..GB_WIDTH as usize {
@@ -564,10 +583,13 @@ impl Renderer {
         }
 
         // Render LCD content texture with border offset
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Main LCD window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_ref(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_ref(texture_id)
             .ok_or("Main LCD texture not found in pool")?;
 
         window
@@ -611,7 +633,7 @@ impl Renderer {
     fn render_tilemap(&mut self, window_type: DebugWindowType) -> Result<(), String> {
         // Ensure texture is allocated
         self.ensure_texture_allocated(window_type)?;
-        
+
         let window = self
             .windows
             .get_mut(&window_type)
@@ -670,14 +692,18 @@ impl Renderer {
         });
 
         // Get texture from pool
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Tilemap window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_mut(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_mut(texture_id)
             .ok_or("Tilemap texture not found in pool")?;
 
         // Convert to RGB and render
-        pooled_texture.texture_mut()
+        pooled_texture
+            .texture_mut()
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 for y in 0..256 {
                     for x in 0..256 {
@@ -693,10 +719,13 @@ impl Renderer {
             })
             .map_err(|e| e.to_string())?;
 
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Tilemap window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_ref(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_ref(texture_id)
             .ok_or("Tilemap texture not found in pool")?;
 
         window.canvas.clear();
@@ -721,7 +750,7 @@ impl Renderer {
     fn render_tile_data(&mut self) -> Result<(), String> {
         // Ensure texture is allocated
         self.ensure_texture_allocated(DebugWindowType::TileData)?;
-        
+
         let window = self
             .windows
             .get_mut(&DebugWindowType::TileData)
@@ -764,14 +793,18 @@ impl Renderer {
         });
 
         // Get texture from pool
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Tile data window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_mut(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_mut(texture_id)
             .ok_or("Tile data texture not found in pool")?;
 
         // Convert to RGB and render
-        pooled_texture.texture_mut()
+        pooled_texture
+            .texture_mut()
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 for y in 0..(24 * 8) {
                     for x in 0..(16 * 8) {
@@ -787,10 +820,13 @@ impl Renderer {
             })
             .map_err(|e| e.to_string())?;
 
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Tile data window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_ref(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_ref(texture_id)
             .ok_or("Tile data texture not found in pool")?;
 
         window.canvas.clear();
@@ -810,7 +846,7 @@ impl Renderer {
     fn render_palettes(&mut self) -> Result<(), String> {
         // Ensure texture is allocated
         self.ensure_texture_allocated(DebugWindowType::Palettes)?;
-        
+
         let window = self
             .windows
             .get_mut(&DebugWindowType::Palettes)
@@ -820,14 +856,18 @@ impl Renderer {
         let (bgp, obp0, obp1) = with_state(|state| (state.ppu.bgp, state.ppu.obp0, state.ppu.obp1));
 
         // Get texture from pool
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Palettes window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_mut(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_mut(texture_id)
             .ok_or("Palettes texture not found in pool")?;
 
         // Render palettes
-        pooled_texture.texture_mut()
+        pooled_texture
+            .texture_mut()
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 // Clear to dark gray
                 for y in 0..100 {
@@ -877,10 +917,13 @@ impl Renderer {
             })
             .map_err(|e| e.to_string())?;
 
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Palettes window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_ref(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_ref(texture_id)
             .ok_or("Palettes texture not found in pool")?;
 
         window.canvas.clear();
@@ -896,7 +939,7 @@ impl Renderer {
     fn render_sprite_tiles(&mut self) -> Result<(), String> {
         // Ensure texture is allocated
         self.ensure_texture_allocated(DebugWindowType::SpriteTiles)?;
-        
+
         let window = self
             .windows
             .get_mut(&DebugWindowType::SpriteTiles)
@@ -1010,14 +1053,18 @@ impl Renderer {
         });
 
         // Get texture from pool
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Sprite tiles window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_mut(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_mut(texture_id)
             .ok_or("Sprite tiles texture not found in pool")?;
 
         // Convert to RGB and render
-        pooled_texture.texture_mut()
+        pooled_texture
+            .texture_mut()
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 for y in 0..(10 * 8) {
                     for x in 0..(4 * 8) {
@@ -1033,10 +1080,13 @@ impl Renderer {
             })
             .map_err(|e| e.to_string())?;
 
-        let texture_id = window.texture_id
+        let texture_id = window
+            .texture_id
             .ok_or("Sprite tiles window has no texture allocated")?;
-        
-        let pooled_texture = window.texture_pool.get_texture_ref(texture_id)
+
+        let pooled_texture = window
+            .texture_pool
+            .get_texture_ref(texture_id)
             .ok_or("Sprite tiles texture not found in pool")?;
 
         window.canvas.clear();
