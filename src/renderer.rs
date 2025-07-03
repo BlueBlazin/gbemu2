@@ -17,11 +17,17 @@ pub const TILEMAP_PIXEL_WIDTH: u32 = TILEMAP_WIDTH * TILE_SIZE; // 256
 pub const TILEMAP_PIXEL_HEIGHT: u32 = TILEMAP_HEIGHT * TILE_SIZE; // 256
 
 // Game Boy DMG color palette (greenish tint)
+// const COLORS: [(u8, u8, u8); 4] = [
+//     (155, 188, 15), // Color 0 (lightest)
+//     (139, 172, 15), // Color 1
+//     (48, 98, 48),   // Color 2
+//     (15, 56, 15),   // Color 3 (darkest)
+// ];
 const COLORS: [(u8, u8, u8); 4] = [
-    (155, 188, 15), // Color 0 (lightest)
-    (139, 172, 15), // Color 1
-    (48, 98, 48),   // Color 2
-    (15, 56, 15),   // Color 3 (darkest)
+    (117, 152, 51), // Color 0 (lightest)
+    (88, 143, 81),  // Color 1
+    (60, 118, 96),  // Color 2
+    (46, 97, 90),   // Color 3 (darkest)
 ];
 
 pub struct SdlSystem {

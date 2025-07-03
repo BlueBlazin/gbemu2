@@ -484,6 +484,7 @@ impl PixelFetcher {
         self.tile_index = 0;
         self.tile_data_low = 0;
         self.tile_data_high = 0;
+        // Note: is_window and window_line are preserved
     }
 }
 
@@ -606,8 +607,10 @@ async fn execute_visible_scanline(render_state: &mut PpuRenderState) {
         request_lcd_interrupt();
     }
 
-    let hblank_dots = DOTS_PER_SCANLINE - OAM_SCAN_DOTS - mode_3_dots;
-    sleep_dots(hblank_dots).await;
+    let hblank_dots = DOTS_PER_SCANLINE.saturating_sub(OAM_SCAN_DOTS + mode_3_dots);
+    if hblank_dots > 0 {
+        sleep_dots(hblank_dots).await;
+    }
 
     // Move to next scanline
     with_state_mut(|state| {
@@ -741,22 +744,27 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
         dots_spent += render_state.scx_discard_count as u16;
     }
 
-    // Initial tile fetch penalty (12 dots)
-    sleep_dots(12).await;
-    dots_spent += 12;
-
-    while render_state.pixel_x < 160 {
-        // Run fetcher step
+    // Initial tile fetch setup - need to fill FIFO before starting
+    // Run fetcher until we have pixels to output
+    while render_state.bg_fifo.is_empty() && dots_spent < 200 {
         let fetcher_dots = run_fetcher_step(render_state).await;
         dots_spent += fetcher_dots;
+    }
 
+    while render_state.pixel_x < 160 {
         // Handle window trigger
         if should_trigger_window(render_state) {
             trigger_window(render_state).await;
             dots_spent += 6; // Window penalty
         }
 
-        // Handle objects
+        // Run fetcher step if FIFO needs more pixels
+        if render_state.bg_fifo.len() <= 8 {
+            let fetcher_dots = run_fetcher_step(render_state).await;
+            dots_spent += fetcher_dots;
+        }
+
+        // Handle objects at current pixel position
         let obj_penalty = handle_objects_at_pixel(render_state).await;
         dots_spent += obj_penalty;
 
@@ -765,13 +773,23 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
             render_pixel(render_state).await;
             render_state.pixel_x += 1;
             dots_spent += 1;
+        } else {
+            // If we can't render, still consume a dot
+            sleep_dots(1).await;
+            dots_spent += 1;
         }
     }
 
-    // Minimum mode 3 time is 172 dots
-    if dots_spent < 172 {
-        sleep_dots(172 - dots_spent).await;
-        dots_spent = 172;
+    // Ensure minimum mode 3 time and cap maximum
+    let minimum_mode_3 = 172;
+    let maximum_mode_3 = 289;
+    
+    if dots_spent < minimum_mode_3 {
+        sleep_dots(minimum_mode_3 - dots_spent).await;
+        dots_spent = minimum_mode_3;
+    } else if dots_spent > maximum_mode_3 {
+        // Cap at maximum to prevent HBlank underflow
+        dots_spent = maximum_mode_3;
     }
 
     dots_spent
@@ -974,13 +992,18 @@ async fn fetch_object_pixels(render_state: &mut PpuRenderState, obj: &ObjectData
         return 11;
     }
 
-    // Calculate object tile penalty based on background tile alignment
+    // Object penalty algorithm from notes:
+    // 1. Determine the tile that the object's leftmost pixel is within
     let scx = with_state(|state| state.ppu.scx);
-    let tile_pixel = (render_state.pixel_x + scx) % 8;
-    let remaining_pixels = 8 - tile_pixel;
-
-    if remaining_pixels > 2 {
-        penalty += remaining_pixels as u16 - 2;
+    let obj_leftmost_pixel = (obj.x as i16 - 8).max(0) as u8;
+    let tile_pixel_pos = (obj_leftmost_pixel + scx) % 8;
+    
+    // 2. Count pixels strictly to the right of the object's leftmost pixel in that tile
+    let pixels_to_right = 7 - tile_pixel_pos;
+    
+    // 3. Subtract 2 and add to penalty (minimum 0)
+    if pixels_to_right >= 2 {
+        penalty += (pixels_to_right - 2) as u16;
     }
 
     // Fetch object tile data
