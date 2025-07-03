@@ -536,7 +536,6 @@ impl PpuRenderState {
         self.obj_fifo.clear();
         self.fetcher.reset();
         self.pixel_x = 0;
-        self.objects_on_line.clear();
         self.window_triggered = false;
         self.scx_discard_count = 0;
         self.mode_3_penalty = 0;
@@ -1206,7 +1205,6 @@ async fn render_pixel(render_state: &mut PpuRenderState) {
             state.ppu.ly as usize,
             final_color,
         );
-
 
         final_color
     });
