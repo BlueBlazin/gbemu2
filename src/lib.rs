@@ -14,3 +14,4 @@ mod timer;
 pub mod emulation_runner;
 pub mod renderer;
 pub mod rom_loader;
+pub mod texture_pool;
