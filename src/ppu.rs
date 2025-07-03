@@ -483,10 +483,11 @@ impl PixelFetcher {
 
     pub fn reset(&mut self) {
         self.state = FetcherState::GetTileMap;
+        self.x = 0;
         self.tile_index = 0;
         self.tile_data_low = 0;
         self.tile_data_high = 0;
-        // Note: is_window and window_line are preserved
+        self.is_window = false;
     }
 }
 
@@ -754,11 +755,9 @@ async fn oam_scan(render_state: &mut PpuRenderState) {
 async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
     render_state.reset_for_scanline();
 
-    // Initialize fetcher for this scanline
-    let (ly, scx) = with_state(|state| (state.ppu.ly, state.ppu.scx));
-
-    render_state.fetcher.x = scx / 8;
-    render_state.fetcher.y = ly;
+    // The fetcher's x is now correctly reset to 0 by reset_for_scanline.
+    // We only need to set the discard count based on SCX.
+    let scx = with_state(|state| state.ppu.scx);
     render_state.scx_discard_count = scx % 8;
 
     let mut dots_spent = 0;
@@ -839,6 +838,7 @@ async fn trigger_window(render_state: &mut PpuRenderState) {
     render_state.bg_fifo.clear();
     render_state.fetcher.reset();
     render_state.fetcher.is_window = true;
+    render_state.fetcher.x = 0;
 
     // When window triggers, we also need to reset object FIFO state
     render_state.obj_fifo.clear();
@@ -899,16 +899,16 @@ async fn get_tile_map(render_state: &mut PpuRenderState) {
         } else {
             // Background tile map
             let map_base = state.ppu.get_bg_tile_map_base();
-            let tile_x = render_state.fetcher.x as u16;
-            let tile_y = ((state.ppu.ly.wrapping_add(state.ppu.scy)) / 8) as u16;
-            let tile_addr = map_base + (tile_y & 31) * 32 + (tile_x & 31);
+            let tile_x = ((state.ppu.scx / 8).wrapping_add(render_state.fetcher.x)) & 0x1F;
+            let tile_y = state.ppu.ly.wrapping_add(state.ppu.scy) / 8;
+            let tile_addr = map_base + (tile_y as u16 * 32) + tile_x as u16;
 
             if tile_addr >= 0x9800 && tile_addr < 0x9C00 {
                 state.ppu.bg_tile_map_0[(tile_addr - 0x9800) as usize]
             } else if tile_addr >= 0x9C00 && tile_addr < 0xA000 {
                 state.ppu.bg_tile_map_1[(tile_addr - 0x9C00) as usize]
             } else {
-                0xFF
+                0
             }
         }
     });
