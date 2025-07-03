@@ -75,7 +75,8 @@ pub struct Renderer {
     windows: HashMap<DebugWindowType, DebugWindow>,
     scale: u32,
     grid_lines: Vec<(sdl2::rect::Point, sdl2::rect::Point)>,
-    border_thickness: u32,
+    border_horizontal: u32,
+    border_vertical: u32,
 }
 
 impl Renderer {
@@ -91,9 +92,10 @@ impl Renderer {
         // Window arrangement calculations
         let lcd_content_width = GB_WIDTH * scale;
         let lcd_content_height = GB_HEIGHT * scale;
-        let border_thickness = 20; // Thick black border around LCD
-        let main_width = lcd_content_width + (border_thickness * 2);
-        let main_height = lcd_content_height + (border_thickness * 2);
+        let border_vertical = 20; // Top and bottom border thickness
+        let border_horizontal = 40; // Left and right border thickness (twice as thick)
+        let main_width = lcd_content_width + (border_horizontal * 2);
+        let main_height = lcd_content_height + (border_vertical * 2);
         let tilemap_scale = 1; // Tilemaps at 1x scale (256x256)
         let tilemap_width = TILEMAP_PIXEL_WIDTH * tilemap_scale;
         let tilemap_height = TILEMAP_PIXEL_HEIGHT * tilemap_scale;
@@ -250,23 +252,24 @@ impl Renderer {
 
         // Pre-calculate grid line coordinates (offset by border)
         let mut grid_lines = Vec::new();
-        let border_offset = border_thickness as i32;
+        let border_h = border_horizontal as i32;
+        let border_v = border_vertical as i32;
         
         // Vertical lines (159 lines between 160 columns)
         for x in 1..GB_WIDTH {
-            let x_pos = border_offset + (x * scale) as i32;
+            let x_pos = border_h + (x * scale) as i32;
             grid_lines.push((
-                sdl2::rect::Point::new(x_pos, border_offset),
-                sdl2::rect::Point::new(x_pos, border_offset + (GB_HEIGHT * scale) as i32),
+                sdl2::rect::Point::new(x_pos, border_v),
+                sdl2::rect::Point::new(x_pos, border_v + (GB_HEIGHT * scale) as i32),
             ));
         }
         
         // Horizontal lines (143 lines between 144 rows)
         for y in 1..GB_HEIGHT {
-            let y_pos = border_offset + (y * scale) as i32;
+            let y_pos = border_v + (y * scale) as i32;
             grid_lines.push((
-                sdl2::rect::Point::new(border_offset, y_pos),
-                sdl2::rect::Point::new(border_offset + (GB_WIDTH * scale) as i32, y_pos),
+                sdl2::rect::Point::new(border_h, y_pos),
+                sdl2::rect::Point::new(border_h + (GB_WIDTH * scale) as i32, y_pos),
             ));
         }
 
@@ -274,7 +277,8 @@ impl Renderer {
             windows, 
             scale, 
             grid_lines,
-            border_thickness,
+            border_horizontal,
+            border_vertical,
         })
     }
 
@@ -338,8 +342,8 @@ impl Renderer {
                 &window.texture,
                 None,
                 Some(Rect::new(
-                    self.border_thickness as i32,
-                    self.border_thickness as i32,
+                    self.border_horizontal as i32,
+                    self.border_vertical as i32,
                     GB_WIDTH * self.scale,
                     GB_HEIGHT * self.scale,
                 )),
