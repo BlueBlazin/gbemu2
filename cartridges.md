@@ -210,3 +210,66 @@ impl Mbc for Mbc1 {
     }
 }
 ```
+
+## MBC 1
+
+### MBC1 registers
+
+- The MBC1 chip includes four registers that affect the behaviour of the chip
+- All registers are smaller than 8 bits, and unused bits are simply ignored during writes
+- The registers are not directly readable
+
+#### Register 12.1: 0x0000-0x1FFF - RAMG - MBC1 RAM gate register
+
+- bit 7-4 Unimplemented: Ignored during writes
+- bit 3-0 RAMG<3:0>: RAM gate register
+
+  - 0b1010 = enable access to chip RAM
+  - All other values disable access to chip RAM
+
+- The RAMG register is used to enable access to the cartridge SRAM if one exists
+- RAM access is disabled by default but can be enabled by writing to the 0x0000-0x1FFF address range a value with the bit pattern 0b1010 in the lower nibble
+- Upper bits don’t matter, but any other bit pattern in the lower nibble disables access to RAM
+- When RAM access is disabled, all writes to the external RAM area 0xA000-0xBFFF are ignored, and reads return 0xFF
+
+#### Register 12.2: 0x2000-0x3FFF - BANK1 - MBC1 bank register 1
+
+- bit 7-5 Unimplemented: Ignored during writes
+- bit 4-0 BANK1<4:0>: Bank register 1
+
+  - Never contains the value 0b00000
+  - If 0b00000 is written, the resulting value will be 0b00001 instead
+
+- The 5-bit BANK1 register is used as the lower 5 bits of the ROM bank number when the CPU accesses the 0x4000-0x7FFF memory area
+- MBC1 doesn’t allow the BANK1 register to contain zero (bit pattern 0b00000), so the initial value at reset is 0b00001 and attempting to write 0b00000 will write 0b00001 instead
+- This makes it impossible to read banks 0x00, 0x20, 0x40 and 0x60 from the 0x4000-0x7FFF memory area, because those bank numbers have 0b00000 in the lower bits
+- Due to the zero value adjustment, requesting any of these banks actually requests the next bank (e.g. 0x21 instead of 0x20)
+
+#### Register 12.3: 0x2000-0x3FFF - BANK1 - MBC1 bank register 2
+
+- bit 7-2 Unimplemented: Ignored during writes
+- bit 1-0 BANK2<1:0>: Bank register 2
+- The 2-bit BANK2 register can be used as the upper bits of the ROM bank number, or as the 2-bit RAM bank number
+- Unlike BANK1, BANK2 doesn’t disallow zero, so all 2-bit values are possible
+
+#### Register 12.4: 0x6000-0x7FFF - MODE - MBC1 mode register
+
+- bit 7-1 Unimplemented: Ignored during writes
+- bit 0 MODE: Mode register
+  - 0b1 = BANK2 affects accesses to 0x0000-0x3FFF, 0x4000-0x7FFF, 0xA000-0xBFFF
+  - 0b0 = BANK2 affects only accesses to 0x4000-0x7FFF
+- The MODE register determines how the BANK2 register value is used during memory accesses.
+
+#### 12.2 ROM in the 0x0000-0x7FFF area
+
+- When the 0x0000-0x3FFF address range is accessed, the effective bank number depends on the MODE register
+- In MODE 0b0 the bank number is always 0, but in MODE 0b1 it’s formed by shifting the BANK2 register value left by 5 bits.
+- When the 0x4000-0x7FFF addess range is accessed, the effective bank number is always a combination of BANK1 and BANK2 register values
+- If the cartridge ROM is smaller than 16 Mbit, there are less ROM address pins to connect to and therefore some bank number bits are ignored
+
+#### 12.3 RAM in the 0xA000-0xBFFF area
+
+- Some MBC1 carts include SRAM, which is mapped to the 0xA000-0xBFFF area
+- If no RAM is present, or RAM is not enabled with the RAMG register, all reads return undefined values and writes have no effect
+- In MODE 0b0 the BANK2 register value is not used, so the first RAM bank is always mapped to the 0xA000-0xBFFF area
+- In MODE 0b1 the BANK2 register value is used as the bank number

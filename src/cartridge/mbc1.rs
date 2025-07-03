@@ -38,7 +38,7 @@ impl Mbc1 {
             rom_data,
             ram_data,
             ram_enabled: false,
-            rom_bank: 1, // Default to bank 1 (bank 0 acts as bank 1)
+            rom_bank: 1, // Default to bank 1
             ram_bank: 0,
             banking_mode: 0, // Default to ROM banking mode
         })
@@ -61,6 +61,12 @@ impl Mbc1 {
 
         // Add upper bits from ram_bank register
         bank |= (self.ram_bank as usize) << 5;
+
+        // Handle the zero substitution for combined banks
+        // Banks 0x00, 0x20, 0x40, 0x60 become 0x01, 0x21, 0x41, 0x61
+        if (bank & 0x1F) == 0 {
+            bank += 1;
+        }
 
         // Mask to available banks
         bank % self.info.rom_banks
@@ -138,14 +144,8 @@ impl Mbc for Mbc1 {
             // ROM Bank Number (0x2000-0x3FFF)
             0x2000..=0x3FFF => {
                 // 5-bit register, values 0x00-0x1F
-                let mut bank = value & 0x1F;
-
-                // Bank 0 is treated as bank 1
-                if bank == 0 {
-                    bank = 1;
-                }
-
-                self.rom_bank = bank;
+                // Store the raw value - zero substitution happens in bank calculation
+                self.rom_bank = value & 0x1F;
             }
 
             // RAM Bank Number / Upper ROM Bank bits (0x4000-0x5FFF)
@@ -244,9 +244,9 @@ mod tests {
         mbc1.write(0x2000, 0x02);
         assert_eq!(mbc1.rom_bank, 2);
 
-        // Bank 0 should be treated as bank 1
+        // Bank 0 register stores 0, but bank calculation substitutes to 1
         mbc1.write(0x2000, 0x00);
-        assert_eq!(mbc1.rom_bank, 1);
+        assert_eq!(mbc1.rom_bank, 0); // Register stores raw value
 
         // Test upper bits are masked
         mbc1.write(0x2000, 0xFF);
