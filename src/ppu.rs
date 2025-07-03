@@ -553,24 +553,36 @@ async fn sleep_dots(dots: u16) {
 // Main PPU async function
 pub async fn ppu() {
     let mut render_state = PpuRenderState::new();
+    let mut lcd_was_on = with_state(|s| s.ppu.lcd_enable());
 
     loop {
         // Get current PPU state
-        let (ly, _mode, lcdc) =
-            with_state(|state| (state.ppu.ly, state.ppu.ppu_mode, state.ppu.lcdc));
+        let lcd_is_on = with_state(|state| state.ppu.lcd_enable());
 
-        // Check if LCD is enabled
-        if (lcdc & 0x80) == 0 {
-            // LCD is disabled - reset everything
+        // Check if LCD was just turned off
+        if !lcd_is_on && lcd_was_on {
+            // LCD was just disabled - reset PPU state once.
             with_state_mut(|state| {
                 state.ppu.ly = 0;
                 state.ppu.dots = 0;
-                state.ppu.set_mode(0); // HBlank
+                state.ppu.set_mode(MODE_HBLANK); // Or MODE_OAM_SCAN, Mode 0 is common
                 state.ppu.window_line = 0;
+                // You might also want to clear the framebuffer here.
+                state.ppu.clear_framebuffer();
             });
-            sleep_dots(1).await;
+            emit_event(Event::VBlank); // Force a screen update to show it's blank
+        }
+        lcd_was_on = lcd_is_on;
+
+        // If LCD is off, just sleep and let other tasks run.
+        // Don't modify PPU state in a loop.
+        if !lcd_is_on {
+            // Sleep for a while to yield control. A full scanline is a safe bet.
+            sleep(DOTS_PER_SCANLINE as usize).await;
             continue;
         }
+
+        let ly = with_state(|state| state.ppu.ly);
 
         if ly < VISIBLE_SCANLINES {
             // Visible scanlines (0-143)
@@ -750,12 +762,6 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
     render_state.scx_discard_count = scx % 8;
 
     let mut dots_spent = 0;
-
-    // Background scrolling penalty
-    if render_state.scx_discard_count > 0 {
-        sleep_dots(render_state.scx_discard_count as u16).await;
-        dots_spent += render_state.scx_discard_count as u16;
-    }
 
     // Initial tile fetch setup - need to fill FIFO before starting
     // Run fetcher until we have pixels to output
