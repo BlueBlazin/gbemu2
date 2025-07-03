@@ -78,44 +78,8 @@ async fn await_dma_transfer() {
             let source_addr = state.dma.source_address.wrapping_add(byte_index as u16);
             let dest_addr = 0xFE00 + byte_index as u16;
 
-            // Read from source address
-            let byte_value = if source_addr <= 0xDFFF {
-                // Valid source range (ROM/RAM)
-                match source_addr {
-                    // ROM areas (handled by cartridge)
-                    0x0000..=0x7FFF | 0xA000..=0xBFFF => {
-                        if let Some(ref cartridge) = state.mmu.cartridge {
-                            cartridge.read(source_addr)
-                        } else {
-                            0xFF
-                        }
-                    }
-                    // Video RAM - read from PPU state
-                    0x8000..=0x9FFF => {
-                        let vram_addr = (source_addr & 0x1FFF) as usize;
-                        if vram_addr < 0x1800 {
-                            // Tile data area
-                            let tile_index = vram_addr / 16;
-                            let byte_in_tile = vram_addr % 16;
-                            state.ppu.vram[tile_index][byte_in_tile]
-                        } else {
-                            // Tile map areas
-                            let map_addr = vram_addr - 0x1800;
-                            if map_addr < 0x400 {
-                                state.ppu.bg_tile_map_0[map_addr]
-                            } else {
-                                state.ppu.bg_tile_map_1[map_addr - 0x400]
-                            }
-                        }
-                    }
-                    // Work RAM
-                    0xC000..=0xDFFF => state.mmu.wram[(source_addr & 0x1FFF) as usize],
-                    _ => 0xFF,
-                }
-            } else {
-                // Invalid source address
-                0xFF
-            };
+            // Read from source address using the MMU
+            let byte_value = state.mmu.read_unrestricted(source_addr, &state.ppu);
 
             // Write to OAM - write to PPU state
             let oam_index = ((dest_addr - 0xFE00) / 4) as usize;

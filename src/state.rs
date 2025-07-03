@@ -85,7 +85,6 @@ impl RenderDirtyFlags {
         self.tile_data = true;
         self.sprite_tiles = true;
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -284,7 +283,13 @@ impl EmulatorState {
             }
             _ => {
                 let dma_active = self.dma.is_bus_restricted();
-                self.mmu.write(address, value, dma_active, &mut self.ppu, &mut self.render_dirty_flags);
+                self.mmu.write(
+                    address,
+                    value,
+                    dma_active,
+                    &mut self.ppu,
+                    &mut self.render_dirty_flags,
+                );
             }
         }
     }
@@ -393,7 +398,6 @@ impl EmulatorState {
     pub fn mark_palette_dirty(&mut self) {
         self.render_dirty_flags.mark_palette_dirty();
     }
-
 
     pub fn clear_all_dirty_flags(&mut self) {
         self.render_dirty_flags.clear_all();
