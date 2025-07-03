@@ -613,16 +613,18 @@ async fn execute_visible_scanline(render_state: &mut PpuRenderState) {
     }
 
     // Move to next scanline
-    with_state_mut(|state| {
+    let should_interrupt = with_state_mut(|state| {
         state.ppu.ly += 1;
         state.ppu.dots = 0;
         state.ppu.update_lyc_ly_flag();
 
         // Check for LYC=LY interrupt
-        if state.ppu.should_trigger_stat_interrupt() {
-            request_lcd_interrupt();
-        }
+        state.ppu.should_trigger_stat_interrupt()
     });
+    
+    if should_interrupt {
+        request_lcd_interrupt();
+    }
 }
 
 async fn execute_vblank_scanline() {
@@ -646,16 +648,18 @@ async fn execute_vblank_scanline() {
     sleep_dots(DOTS_PER_SCANLINE).await;
 
     // Move to next scanline
-    with_state_mut(|state| {
+    let should_interrupt = with_state_mut(|state| {
         state.ppu.ly += 1;
         state.ppu.dots = 0;
         state.ppu.update_lyc_ly_flag();
 
         // Check for LYC=LY interrupt
-        if state.ppu.should_trigger_stat_interrupt() {
-            request_lcd_interrupt();
-        }
+        state.ppu.should_trigger_stat_interrupt()
     });
+    
+    if should_interrupt {
+        request_lcd_interrupt();
+    }
 }
 
 async fn execute_last_scanline() {
@@ -663,17 +667,19 @@ async fn execute_last_scanline() {
     sleep_dots(4).await;
 
     // Reset to scanline 0
-    with_state_mut(|state| {
+    let should_interrupt = with_state_mut(|state| {
         state.ppu.ly = 0;
         state.ppu.dots = 0;
         state.ppu.update_lyc_ly_flag();
         state.ppu.window_line = 0;
 
         // Check for LYC=LY interrupt
-        if state.ppu.should_trigger_stat_interrupt() {
-            request_lcd_interrupt();
-        }
+        state.ppu.should_trigger_stat_interrupt()
     });
+    
+    if should_interrupt {
+        request_lcd_interrupt();
+    }
 
     // Sleep for remainder of scanline
     sleep_dots(DOTS_PER_SCANLINE - 4).await;
