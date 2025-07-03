@@ -17,12 +17,6 @@ pub const TILEMAP_PIXEL_WIDTH: u32 = TILEMAP_WIDTH * TILE_SIZE; // 256
 pub const TILEMAP_PIXEL_HEIGHT: u32 = TILEMAP_HEIGHT * TILE_SIZE; // 256
 
 // Game Boy DMG color palette (greenish tint)
-// const COLORS: [(u8, u8, u8); 4] = [
-//     (155, 188, 15), // Color 0 (lightest)
-//     (139, 172, 15), // Color 1
-//     (48, 98, 48),   // Color 2
-//     (15, 56, 15),   // Color 3 (darkest)
-// ];
 const COLORS: [(u8, u8, u8); 4] = [
     (117, 152, 51), // Color 0 (lightest)
     (88, 143, 81),  // Color 1
@@ -80,6 +74,7 @@ struct DebugWindow {
 pub struct Renderer {
     windows: HashMap<DebugWindowType, DebugWindow>,
     scale: u32,
+    grid_lines: Vec<(sdl2::rect::Point, sdl2::rect::Point)>,
 }
 
 impl Renderer {
@@ -144,6 +139,7 @@ impl Renderer {
         let main_texture = texture_creator
             .create_texture_streaming(PixelFormatEnum::RGB24, GB_WIDTH, GB_HEIGHT)
             .map_err(|e| e.to_string())?;
+        
         windows.insert(
             DebugWindowType::MainLcd,
             DebugWindow {
@@ -248,7 +244,32 @@ impl Renderer {
             },
         );
 
-        Ok(Renderer { windows, scale })
+        // Pre-calculate grid line coordinates
+        let mut grid_lines = Vec::new();
+        
+        // Vertical lines (159 lines between 160 columns)
+        for x in 1..GB_WIDTH {
+            let x_pos = (x * scale) as i32;
+            grid_lines.push((
+                sdl2::rect::Point::new(x_pos, 0),
+                sdl2::rect::Point::new(x_pos, (GB_HEIGHT * scale) as i32),
+            ));
+        }
+        
+        // Horizontal lines (143 lines between 144 rows)
+        for y in 1..GB_HEIGHT {
+            let y_pos = (y * scale) as i32;
+            grid_lines.push((
+                sdl2::rect::Point::new(0, y_pos),
+                sdl2::rect::Point::new((GB_WIDTH * scale) as i32, y_pos),
+            ));
+        }
+
+        Ok(Renderer { 
+            windows, 
+            scale, 
+            grid_lines,
+        })
     }
 
     pub fn render_frame(&mut self) -> Result<(), String> {
@@ -315,34 +336,26 @@ impl Renderer {
                 )),
             )
             .map_err(|e| e.to_string())?;
-        
-        // Draw pixel grid overlay with transparency
+
+        // Draw pixel grid overlay using pre-calculated lines
         use sdl2::render::BlendMode;
-        
+
         // Enable alpha blending for the canvas
         window.canvas.set_blend_mode(BlendMode::Blend);
-        
+
         // Use semi-transparent color (alpha = 50 out of 255 for subtle grid)
-        window.canvas.set_draw_color(sdl2::pixels::Color::RGBA(148, 138, 5, 50));
-        
-        // Draw vertical lines (159 lines between 160 columns)
-        for x in 1..GB_WIDTH {
-            let x_pos = (x * self.scale) as i32;
-            window.canvas.draw_line(
-                sdl2::rect::Point::new(x_pos, 0),
-                sdl2::rect::Point::new(x_pos, (GB_HEIGHT * self.scale) as i32)
-            ).map_err(|e| e.to_string())?;
+        window
+            .canvas
+            .set_draw_color(sdl2::pixels::Color::RGBA(148, 138, 5, 50));
+
+        // Draw all pre-calculated grid lines
+        for (start, end) in &self.grid_lines {
+            window
+                .canvas
+                .draw_line(*start, *end)
+                .map_err(|e| e.to_string())?;
         }
-        
-        // Draw horizontal lines (143 lines between 144 rows)
-        for y in 1..GB_HEIGHT {
-            let y_pos = (y * self.scale) as i32;
-            window.canvas.draw_line(
-                sdl2::rect::Point::new(0, y_pos),
-                sdl2::rect::Point::new((GB_WIDTH * self.scale) as i32, y_pos)
-            ).map_err(|e| e.to_string())?;
-        }
-        
+
         window.canvas.present();
 
         Ok(())
