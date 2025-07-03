@@ -315,6 +315,34 @@ impl Renderer {
                 )),
             )
             .map_err(|e| e.to_string())?;
+        
+        // Draw pixel grid overlay with transparency
+        use sdl2::render::BlendMode;
+        
+        // Enable alpha blending for the canvas
+        window.canvas.set_blend_mode(BlendMode::Blend);
+        
+        // Use semi-transparent color (alpha = 50 out of 255 for subtle grid)
+        window.canvas.set_draw_color(sdl2::pixels::Color::RGBA(148, 138, 5, 50));
+        
+        // Draw vertical lines (159 lines between 160 columns)
+        for x in 1..GB_WIDTH {
+            let x_pos = (x * self.scale) as i32;
+            window.canvas.draw_line(
+                sdl2::rect::Point::new(x_pos, 0),
+                sdl2::rect::Point::new(x_pos, (GB_HEIGHT * self.scale) as i32)
+            ).map_err(|e| e.to_string())?;
+        }
+        
+        // Draw horizontal lines (143 lines between 144 rows)
+        for y in 1..GB_HEIGHT {
+            let y_pos = (y * self.scale) as i32;
+            window.canvas.draw_line(
+                sdl2::rect::Point::new(0, y_pos),
+                sdl2::rect::Point::new((GB_WIDTH * self.scale) as i32, y_pos)
+            ).map_err(|e| e.to_string())?;
+        }
+        
         window.canvas.present();
 
         Ok(())
