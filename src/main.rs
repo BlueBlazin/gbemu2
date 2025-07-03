@@ -49,7 +49,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize SDL system and create renderer
     let (mut sdl_system, sdl_context) = SdlSystem::new()?;
-    let renderer = Renderer::new(args.scale, &sdl_context)?;
+    let rom_filename = args.rom_file.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown ROM");
+    let renderer = Renderer::new(args.scale, &sdl_context, rom_filename)?;
 
     // Create driver and runner
     let driver = create_driver();

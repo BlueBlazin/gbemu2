@@ -80,7 +80,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(scale: u32, sdl_context: &Sdl) -> Result<Self, String> {
+    pub fn new(scale: u32, sdl_context: &Sdl, rom_filename: &str) -> Result<Self, String> {
         let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
         let mut windows = HashMap::new();
 
@@ -130,9 +130,9 @@ impl Renderer {
         let palette_x = tile_data_x;
         let palette_y = tile_data_y + tile_data_height as i32 + margin + 30;
 
-        // Create main LCD window
+        // Create main LCD window with ROM filename as title
         let main_window = video_subsystem
-            .window("LCD", main_width, main_height)
+            .window(rom_filename, main_width, main_height)
             .position(main_x, main_y)
             .build()
             .map_err(|e| e.to_string())?;
