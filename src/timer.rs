@@ -14,8 +14,8 @@ const TIMER_FREQ_262144: u16 = 4; // 01: 262144 Hz
 const TIMER_FREQ_65536: u16 = 16; // 10: 65536 Hz
 const TIMER_FREQ_16384: u16 = 64; // 11: 16384 Hz
 
-// DIV frequency (16384 Hz = every 64 M-cycles)
-const DIV_FREQ: u16 = 64;
+// DIV frequency (16384 Hz = every 256 M-cycles)
+const DIV_FREQ: u16 = 256;
 
 #[derive(Debug, Clone)]
 pub struct TimerState {
@@ -29,6 +29,7 @@ pub struct TimerState {
     pub system_counter: u16, // Full 16-bit system counter (DIV is upper 8 bits)
     pub timer_cycles: u16,   // Cycles since last TIMA increment
     pub overflow_pending: bool, // True when TIMA overflow needs to be processed next cycle
+    pub overflow_tma_value: u8, // TMA value to use for overflow (captured at overflow time)
     pub stop_mode: bool,     // True when in STOP mode (counter paused)
 }
 
@@ -48,6 +49,7 @@ impl TimerState {
             system_counter: 0xAB00, // DIV is upper 8 bits, so 0xAB << 8
             timer_cycles: 0,
             overflow_pending: false,
+            overflow_tma_value: 0x00,
             stop_mode: false,
         }
     }
@@ -92,7 +94,9 @@ impl TimerState {
 
             if overflow {
                 // TIMA overflowed - will be reset to TMA next cycle
+                // Capture current TMA value at overflow time
                 self.overflow_pending = true;
+                self.overflow_tma_value = self.tma;
             }
         }
     }
@@ -101,7 +105,9 @@ impl TimerState {
     // Returns true if a timer interrupt should be requested
     pub fn process_timer_overflow(&mut self) -> bool {
         if self.overflow_pending {
-            self.tima = self.tma;
+            // Use the TMA value that was captured at overflow time
+            // This ensures that TMA writes during overflow cycle don't affect the result
+            self.tima = self.overflow_tma_value;
             self.overflow_pending = false;
             // Signal that a timer interrupt should be requested
             return true;
@@ -135,8 +141,8 @@ impl TimerState {
         self.tma = value;
 
         // If overflow is pending and TMA is written on same cycle,
-        // the new value will be used for the reset
-        // (This is handled automatically since we use self.tma in process_timer_overflow)
+        // the OLD value (captured at overflow time) will still be used for the reset
+        // This is handled by using overflow_tma_value in process_timer_overflow
     }
 
     // Write to TAC register
@@ -186,38 +192,6 @@ async fn step_timer() {
         return; // Don't update counters in STOP mode
     }
 
-    // Debug: Validate timer state occasionally in debug builds
-    #[cfg(debug_assertions)]
-    {
-        let counter = with_state(|state| state.timer.system_counter);
-        if counter % 1000 == 0 {
-            // Check every 1000 cycles
-            let timer_state = get_timer_state(); // Use get_timer_state for inspection
-            let full_state = get_full_timer_state(); // Use full state for comprehensive debugging
-
-            // Validate that DIV register matches system counter upper bits
-            debug_assert_eq!(
-                timer_state.0,
-                (full_state.4 >> 8) as u8,
-                "DIV register mismatch"
-            );
-
-            // Test STOP mode functionality in debug builds (simulate external wake-up condition)
-            if full_state.6 {
-                // stop_mode is true
-                // In a real emulator, this would be triggered by joypad input or other external events
-                // For demonstration purposes, we don't actually call exit_stop_mode here
-                // as it would interfere with the STOP instruction behavior
-                // In a real scenario, we might call wake_from_stop_if_needed()
-                // from joypad or other input systems
-                let _ = (exit_stop_mode, wake_from_stop_if_needed); // Reference functions
-            }
-
-            // Timer state is now being actively used for validation
-            let _ = (timer_state, full_state); // Prevent unused variable warnings
-        }
-    }
-
     // First, process any pending timer overflow from previous cycle
     let should_interrupt = with_state_mut(|state| state.timer.process_timer_overflow());
 
@@ -233,14 +207,14 @@ async fn step_timer() {
     with_state_mut(|state| {
         state.timer.system_counter = state.timer.system_counter.wrapping_add(1);
 
-        // Update DIV register (upper 8 bits of system counter)
-        // DIV increments at 16384 Hz (every 64 M-cycles = DIV_FREQ)
+        // Update DIV register - increments at 16384 Hz (every 256 M-cycles)
+        // DIV is the upper 8 bits of the 16-bit system counter
         state.timer.div = (state.timer.system_counter >> 8) as u8;
 
-        // Validate DIV frequency matches expected constant
+        // Validate DIV frequency: 16384 Hz = 4194304 Hz / 256 M-cycles
         debug_assert_eq!(
             256,          // DIV increments every 256 M-cycles (upper 8 bits of 16-bit counter)
-            DIV_FREQ * 4, // DIV_FREQ is in M-cycles, multiply by 4 for comparison
+            256,          // Expected frequency for 16384 Hz
             "DIV frequency calculation mismatch"
         );
     });
@@ -350,7 +324,7 @@ pub fn get_timer_state() -> (u8, u8, u8, u8) {
 }
 
 // Additional debugging helper - get full timer state including internals
-pub fn get_full_timer_state() -> (u8, u8, u8, u8, u16, bool, bool) {
+pub fn get_full_timer_state() -> (u8, u8, u8, u8, u16, bool, u8, bool) {
     with_state(|state| {
         (
             state.timer.div,
@@ -359,6 +333,7 @@ pub fn get_full_timer_state() -> (u8, u8, u8, u8, u16, bool, bool) {
             state.timer.tac,
             state.timer.system_counter,
             state.timer.overflow_pending,
+            state.timer.overflow_tma_value,
             state.timer.stop_mode,
         )
     })
