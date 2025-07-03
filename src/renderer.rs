@@ -145,7 +145,7 @@ impl Renderer {
         let main_texture = texture_creator
             .create_texture_streaming(PixelFormatEnum::RGB24, GB_WIDTH, GB_HEIGHT)
             .map_err(|e| e.to_string())?;
-        
+
         windows.insert(
             DebugWindowType::MainLcd,
             DebugWindow {
@@ -254,7 +254,7 @@ impl Renderer {
         let mut grid_lines = Vec::new();
         let border_h = border_horizontal as i32;
         let border_v = border_vertical as i32;
-        
+
         // Vertical lines (159 lines between 160 columns)
         for x in 1..GB_WIDTH {
             let x_pos = border_h + (x * scale) as i32;
@@ -263,7 +263,7 @@ impl Renderer {
                 sdl2::rect::Point::new(x_pos, border_v + (GB_HEIGHT * scale) as i32),
             ));
         }
-        
+
         // Horizontal lines (143 lines between 144 rows)
         for y in 1..GB_HEIGHT {
             let y_pos = border_v + (y * scale) as i32;
@@ -273,9 +273,9 @@ impl Renderer {
             ));
         }
 
-        Ok(Renderer { 
-            windows, 
-            scale, 
+        Ok(Renderer {
+            windows,
+            scale,
             grid_lines,
             border_horizontal,
             border_vertical,
@@ -331,10 +331,70 @@ impl Renderer {
             })
             .map_err(|e| e.to_string())?;
 
-        // Clear canvas with black color (this creates the border)
-        window.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
+        // Clear canvas with black color (flat border)
+        window
+            .canvas
+            .set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
         window.canvas.clear();
-        
+
+        // Create sunken effect only around the LCD screen
+        let bh = self.border_horizontal as i32;
+        let bv = self.border_vertical as i32;
+        let content_width = (GB_WIDTH * self.scale) as i32;
+        let content_height = (GB_HEIGHT * self.scale) as i32;
+
+        // Draw inner shadow (top and left edges around LCD for sunken effect)
+        window
+            .canvas
+            .set_draw_color(sdl2::pixels::Color::RGB(15, 15, 15));
+        // Top edge of LCD area
+        for i in 0..3 {
+            window
+                .canvas
+                .draw_line(
+                    sdl2::rect::Point::new(bh - 3, bv - 3 + i),
+                    sdl2::rect::Point::new(bh + content_width + 2, bv - 3 + i),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        // Left edge of LCD area
+        for i in 0..3 {
+            window
+                .canvas
+                .draw_line(
+                    sdl2::rect::Point::new(bh - 3 + i, bv - 3),
+                    sdl2::rect::Point::new(bh - 3 + i, bv + content_height + 2),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Draw inner highlight (bottom and right edges around LCD for sunken effect)
+        window
+            .canvas
+            .set_draw_color(sdl2::pixels::Color::RGB(45, 45, 45));
+        // Bottom edge of LCD area
+        for i in 0..3 {
+            let y = bv + content_height + 2 - i;
+            window
+                .canvas
+                .draw_line(
+                    sdl2::rect::Point::new(bh - 3, y),
+                    sdl2::rect::Point::new(bh + content_width + 2, y),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        // Right edge of LCD area
+        for i in 0..3 {
+            let x = bh + content_width + 2 - i;
+            window
+                .canvas
+                .draw_line(
+                    sdl2::rect::Point::new(x, bv - 3),
+                    sdl2::rect::Point::new(x, bv + content_height + 2),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+
         // Render LCD content texture with border offset
         window
             .canvas
