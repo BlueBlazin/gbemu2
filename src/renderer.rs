@@ -331,10 +331,12 @@ impl Renderer {
             })
             .map_err(|e| e.to_string())?;
 
-        // Clear canvas with black color (flat border)
+        // Clear canvas with light grayish-purple color (flat border)
         window
             .canvas
-            .set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
+            // .set_draw_color(sdl2::pixels::Color::RGB(170, 160, 172));
+            // .set_draw_color(sdl2::pixels::Color::RGB(61, 64, 70));
+            .set_draw_color(sdl2::pixels::Color::RGB(32, 33, 36));
         window.canvas.clear();
 
         // Create sunken effect only around the LCD screen
