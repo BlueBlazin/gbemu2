@@ -127,10 +127,10 @@ impl Renderer {
         let tilemap1_x = tilemap0_x;
         let tilemap1_y = tilemap0_y + tilemap_height as i32 + margin + 30;
 
-        // Sprite Tiles window (right of BG tilemaps) - 10x4 grid at 2x scale
-        let sprite_tiles_scale = 2;
-        let sprite_tiles_width = 4 * TILE_SIZE * sprite_tiles_scale; // 4 sprites wide at 2x scale
-        let sprite_tiles_height = 10 * TILE_SIZE * sprite_tiles_scale; // 10 sprites tall at 2x scale
+        // Sprite Tiles window (right of BG tilemaps) - 10x4 grid at 3x scale
+        let sprite_tiles_scale = 5; // 5x scale for good visibility
+        let sprite_tiles_width = 4 * TILE_SIZE * sprite_tiles_scale; // 4 sprites wide at 3x scale
+        let sprite_tiles_height = 10 * TILE_SIZE * sprite_tiles_scale; // 10 sprites tall at 3x scale
         let sprite_tiles_x = tilemap0_x + tilemap_width as i32 + margin;
         let sprite_tiles_y = tilemap0_y;
 
