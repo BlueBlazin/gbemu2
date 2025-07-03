@@ -118,7 +118,13 @@ impl Renderer {
         let center_y = display_bounds.height() as i32 / 2;
 
         // Calculate total layout width to center everything
-        let total_width = tile_data_width + margin + main_width + margin + tilemap_width + margin + sprite_tiles_width;
+        let total_width = tile_data_width
+            + margin
+            + main_width
+            + margin
+            + tilemap_width
+            + margin
+            + sprite_tiles_width;
         let layout_start_x = center_x - (total_width as i32 / 2);
 
         // Main LCD window (center of layout)
@@ -319,15 +325,31 @@ impl Renderer {
     }
 
     pub fn render_frame(&mut self) -> Result<(), String> {
-        // Render main LCD
+        // Render main LCD always (handled by VBlank event in emulation_runner.rs)
         self.render_main_lcd()?;
 
-        // Render debug windows
-        self.render_tilemap(DebugWindowType::BgTilemap0)?;
-        self.render_tilemap(DebugWindowType::BgTilemap1)?;
-        self.render_tile_data()?;
-        self.render_palettes()?;
-        self.render_sprite_tiles()?;
+        // Check dirty flags and only render debug windows that need updates
+        let dirty_flags = with_state(|state| state.render_dirty_flags.clone());
+
+        if dirty_flags.bg_tilemap_0 {
+            self.render_tilemap(DebugWindowType::BgTilemap0)?;
+        }
+
+        if dirty_flags.bg_tilemap_1 {
+            self.render_tilemap(DebugWindowType::BgTilemap1)?;
+        }
+
+        if dirty_flags.tile_data {
+            self.render_tile_data()?;
+        }
+
+        if dirty_flags.palettes {
+            self.render_palettes()?;
+        }
+
+        if dirty_flags.sprite_tiles {
+            self.render_sprite_tiles()?;
+        }
 
         Ok(())
     }

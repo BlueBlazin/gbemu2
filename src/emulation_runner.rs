@@ -1,5 +1,5 @@
 use crate::driver::{Driver, Event};
-use crate::emulator::with_state;
+use crate::emulator::{with_state, with_state_mut};
 use crate::renderer::Renderer;
 use image::{ImageBuffer, Rgb};
 use std::fs::File;
@@ -52,6 +52,8 @@ impl EmulationRunner {
 
         // Initial render to show boot state
         self.renderer.render_frame()?;
+        // Clear dirty flags after initial render
+        with_state_mut(|state| state.clear_all_dirty_flags());
 
         while should_continue() {
             let frame_start = Instant::now();
@@ -129,6 +131,8 @@ impl EmulationRunner {
                 Event::VBlank => {
                     // Render the frame when PPU signals VBlank
                     self.renderer.render_frame()?;
+                    // Clear dirty flags after successful rendering
+                    with_state_mut(|state| state.clear_all_dirty_flags());
                 }
                 Event::AudioBufferFull => {
                     // TODO: Handle audio when APU is implemented

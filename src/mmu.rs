@@ -1,5 +1,6 @@
 use crate::cartridge::Cartridge;
 use crate::ppu::PpuState;
+use crate::state::RenderDirtyFlags;
 
 #[derive(Debug)]
 #[allow(clippy::upper_case_acronyms)]
@@ -154,7 +155,7 @@ impl MMU {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8, dma_active: bool, ppu: &mut PpuState) {
+    pub fn write(&mut self, address: u16, value: u8, dma_active: bool, ppu: &mut PpuState, dirty_flags: &mut RenderDirtyFlags) {
         if dma_active {
             // During DMA, CPU can only access HRAM (0xFF80-0xFFFE)
             match address {
@@ -166,11 +167,11 @@ impl MMU {
                 }
             }
         } else {
-            self.write_unrestricted(address, value, ppu);
+            self.write_unrestricted(address, value, ppu, dirty_flags);
         }
     }
 
-    pub fn write_unrestricted(&mut self, address: u16, value: u8, ppu: &mut PpuState) {
+    pub fn write_unrestricted(&mut self, address: u16, value: u8, ppu: &mut PpuState, dirty_flags: &mut RenderDirtyFlags) {
         match address {
             // ROM and External RAM (0x0000-0x7FFF, 0xA000-0xBFFF) - handled by cartridge
             0x0000..=0x7FFF | 0xA000..=0xBFFF => {
@@ -193,13 +194,19 @@ impl MMU {
                         let tile_index = vram_addr / 16;
                         let byte_in_tile = vram_addr % 16;
                         ppu.vram[tile_index][byte_in_tile] = value;
+                        // Mark tile data as dirty
+                        dirty_flags.tile_data = true;
                     } else {
                         // Tile map areas (0x9800-0x9FFF)
                         let map_addr = vram_addr - 0x1800;
                         if map_addr < 0x400 {
                             ppu.bg_tile_map_0[map_addr] = value;
+                            // Mark tilemap 0 as dirty
+                            dirty_flags.bg_tilemap_0 = true;
                         } else {
                             ppu.bg_tile_map_1[map_addr - 0x400] = value;
+                            // Mark tilemap 1 as dirty
+                            dirty_flags.bg_tilemap_1 = true;
                         }
                     }
                 }
@@ -233,6 +240,8 @@ impl MMU {
                             3 => ppu.oam[oam_index].attributes = value,
                             _ => {}
                         }
+                        // Mark OAM/sprite data as dirty
+                        dirty_flags.sprite_tiles = true;
                     }
                 }
                 // Writes are ignored when OAM is not accessible

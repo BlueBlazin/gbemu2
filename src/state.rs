@@ -4,6 +4,90 @@ use crate::mmu::MMU;
 use crate::ppu::PpuState;
 use crate::timer::TimerState;
 
+/// Tracks which debug windows need to be re-rendered
+#[derive(Debug, Clone)]
+pub struct RenderDirtyFlags {
+    /// Background tilemap 0 data has changed
+    pub bg_tilemap_0: bool,
+    /// Background tilemap 1 data has changed
+    pub bg_tilemap_1: bool,
+    /// VRAM tile data has changed
+    pub tile_data: bool,
+    /// Palette registers have changed
+    pub palettes: bool,
+    /// OAM sprite data has changed
+    pub sprite_tiles: bool,
+}
+
+impl Default for RenderDirtyFlags {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RenderDirtyFlags {
+    pub fn new() -> Self {
+        Self {
+            // Start with all windows marked as dirty to ensure initial render
+            bg_tilemap_0: true,
+            bg_tilemap_1: true,
+            tile_data: true,
+            palettes: true,
+            sprite_tiles: true,
+        }
+    }
+
+    /// Mark all flags as dirty (useful for debug mode or major state changes)
+    pub fn mark_all_dirty(&mut self) {
+        self.bg_tilemap_0 = true;
+        self.bg_tilemap_1 = true;
+        self.tile_data = true;
+        self.palettes = true;
+        self.sprite_tiles = true;
+    }
+
+    /// Clear all dirty flags (called after successful rendering)
+    pub fn clear_all(&mut self) {
+        self.bg_tilemap_0 = false;
+        self.bg_tilemap_1 = false;
+        self.tile_data = false;
+        self.palettes = false;
+        self.sprite_tiles = false;
+    }
+
+    /// Check if any flags are dirty
+    pub fn is_any_dirty(&self) -> bool {
+        self.bg_tilemap_0
+            || self.bg_tilemap_1
+            || self.tile_data
+            || self.palettes
+            || self.sprite_tiles
+    }
+
+    /// Mark VRAM-related flags as dirty
+    pub fn mark_vram_dirty(&mut self) {
+        self.tile_data = true;
+        self.bg_tilemap_0 = true;
+        self.bg_tilemap_1 = true;
+    }
+
+    /// Mark OAM-related flags as dirty
+    pub fn mark_oam_dirty(&mut self) {
+        self.sprite_tiles = true;
+    }
+
+    /// Mark palette-related flags as dirty
+    pub fn mark_palette_dirty(&mut self) {
+        self.palettes = true;
+        // Palette changes affect all rendered content
+        self.bg_tilemap_0 = true;
+        self.bg_tilemap_1 = true;
+        self.tile_data = true;
+        self.sprite_tiles = true;
+    }
+
+}
+
 #[derive(Debug, Clone)]
 pub struct CpuState {
     pub a: u8,
@@ -154,6 +238,7 @@ pub struct EmulatorState {
     pub dma: DmaState,
     pub debug_mode: bool,
     pub opcode_log: Vec<(u16, u8)>, // (PC, opcode)
+    pub render_dirty_flags: RenderDirtyFlags,
 }
 
 impl Default for EmulatorState {
@@ -173,6 +258,7 @@ impl EmulatorState {
             dma: DmaState::new(),
             debug_mode: false,
             opcode_log: Vec::new(),
+            render_dirty_flags: RenderDirtyFlags::new(),
         }
     }
 
@@ -198,7 +284,7 @@ impl EmulatorState {
             }
             _ => {
                 let dma_active = self.dma.is_bus_restricted();
-                self.mmu.write(address, value, dma_active, &mut self.ppu);
+                self.mmu.write(address, value, dma_active, &mut self.ppu, &mut self.render_dirty_flags);
             }
         }
     }
@@ -260,9 +346,18 @@ impl EmulatorState {
                         .request_interrupt(crate::interrupts::InterruptType::Lcd);
                 }
             }
-            crate::ppu::BGP_REGISTER => self.ppu.bgp = value,
-            crate::ppu::OBP0_REGISTER => self.ppu.obp0 = value,
-            crate::ppu::OBP1_REGISTER => self.ppu.obp1 = value,
+            crate::ppu::BGP_REGISTER => {
+                self.ppu.bgp = value;
+                self.render_dirty_flags.mark_palette_dirty();
+            }
+            crate::ppu::OBP0_REGISTER => {
+                self.ppu.obp0 = value;
+                self.render_dirty_flags.mark_palette_dirty();
+            }
+            crate::ppu::OBP1_REGISTER => {
+                self.ppu.obp1 = value;
+                self.render_dirty_flags.mark_palette_dirty();
+            }
             crate::ppu::WY_REGISTER => self.ppu.wy = value,
             crate::ppu::WX_REGISTER => self.ppu.wx = value,
             _ => {
@@ -284,5 +379,27 @@ impl EmulatorState {
 
     pub fn get_cartridge_info(&self) -> Option<&crate::cartridge::CartridgeInfo> {
         self.mmu.get_cartridge_info()
+    }
+
+    // Dirty flag management methods
+    pub fn mark_vram_dirty(&mut self) {
+        self.render_dirty_flags.mark_vram_dirty();
+    }
+
+    pub fn mark_oam_dirty(&mut self) {
+        self.render_dirty_flags.mark_oam_dirty();
+    }
+
+    pub fn mark_palette_dirty(&mut self) {
+        self.render_dirty_flags.mark_palette_dirty();
+    }
+
+
+    pub fn clear_all_dirty_flags(&mut self) {
+        self.render_dirty_flags.clear_all();
+    }
+
+    pub fn is_any_dirty(&self) -> bool {
+        self.render_dirty_flags.is_any_dirty()
     }
 }

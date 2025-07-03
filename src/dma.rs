@@ -137,5 +137,7 @@ async fn await_dma_transfer() {
     with_state_mut(|state| {
         state.dma.active = false;
         state.dma.bytes_transferred = 0;
+        // Mark sprite data as dirty after DMA transfer completes
+        state.mark_oam_dirty();
     });
 }
