@@ -107,36 +107,42 @@ impl Renderer {
         let palette_height = 100;
         let margin = 10;
 
+        // Sprite Tiles window dimensions - 10x4 grid at 5x scale
+        let sprite_tiles_scale = 5; // 5x scale for good visibility
+        let sprite_tiles_width = 4 * TILE_SIZE * sprite_tiles_scale; // 4 sprites wide at 5x scale
+        let sprite_tiles_height = 10 * TILE_SIZE * sprite_tiles_scale; // 10 sprites tall at 5x scale
+
         // Position calculations - arrange windows as requested:
         // Main LCD in center, BG tilemaps stacked on right, Tile data on left, Palettes below tile data
         let center_x = display_bounds.width() as i32 / 2;
         let center_y = display_bounds.height() as i32 / 2;
 
-        // Main LCD window (center)
-        let main_x = center_x - (main_width as i32 / 2);
+        // Calculate total layout width to center everything
+        let total_width = tile_data_width + margin + main_width + margin + tilemap_width + margin + sprite_tiles_width;
+        let layout_start_x = center_x - (total_width as i32 / 2);
+
+        // Main LCD window (center of layout)
+        let main_x = layout_start_x + tile_data_width as i32 + margin as i32;
         let main_y = center_y - (main_height as i32 / 2);
 
-        // Tile data window (left of main LCD, moved up to account for title bar)
-        let tile_data_x = main_x - tile_data_width as i32 - margin;
+        // Tile data window (leftmost in layout)
+        let tile_data_x = layout_start_x;
         let tile_data_y = main_y - 30;
 
         // BG Tilemap windows (right of main LCD, stacked vertically)
-        let tilemap0_x = main_x + main_width as i32 + margin;
+        let tilemap0_x = main_x + main_width as i32 + margin as i32;
         let tilemap0_y = main_y - 30;
 
         let tilemap1_x = tilemap0_x;
-        let tilemap1_y = tilemap0_y + tilemap_height as i32 + margin + 30;
+        let tilemap1_y = tilemap0_y + tilemap_height as i32 + margin as i32 + 30;
 
-        // Sprite Tiles window (right of BG tilemaps) - 10x4 grid at 3x scale
-        let sprite_tiles_scale = 5; // 5x scale for good visibility
-        let sprite_tiles_width = 4 * TILE_SIZE * sprite_tiles_scale; // 4 sprites wide at 3x scale
-        let sprite_tiles_height = 10 * TILE_SIZE * sprite_tiles_scale; // 10 sprites tall at 3x scale
-        let sprite_tiles_x = tilemap0_x + tilemap_width as i32 + margin;
+        // Sprite Tiles window (right of BG tilemaps) - 10x4 grid at 5x scale
+        let sprite_tiles_x = tilemap0_x + tilemap_width as i32 + margin as i32;
         let sprite_tiles_y = tilemap0_y;
 
         // Palette window (below tile data)
         let palette_x = tile_data_x;
-        let palette_y = tile_data_y + tile_data_height as i32 + margin + 30;
+        let palette_y = tile_data_y + tile_data_height as i32 + margin as i32 + 30;
 
         // Create main LCD window with ROM filename as title
         let main_window = video_subsystem
