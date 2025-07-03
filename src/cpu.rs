@@ -16,19 +16,19 @@ async fn memory_write(address: u16, value: u8) {
 
 async fn fetch() -> u8 {
     let pc = with_state(|state| state.cpu.pc);
-    let instruction = memory_read(pc).await;
+    let value = memory_read(pc).await;
 
     // Log opcode in debug mode
     with_state_mut(|state| {
         if state.debug_mode {
-            state.opcode_log.push((pc, instruction));
+            state.opcode_log.push((pc, value));
         }
 
         // Increment PC after fetch
         state.cpu.pc = pc.wrapping_add(1);
     });
 
-    instruction
+    value
 }
 
 async fn execute_ld_r_n(opcode: u8) {

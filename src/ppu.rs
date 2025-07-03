@@ -621,7 +621,7 @@ async fn execute_visible_scanline(render_state: &mut PpuRenderState) {
         // Check for LYC=LY interrupt
         state.ppu.should_trigger_stat_interrupt()
     });
-    
+
     if should_interrupt {
         request_lcd_interrupt();
     }
@@ -656,7 +656,7 @@ async fn execute_vblank_scanline() {
         // Check for LYC=LY interrupt
         state.ppu.should_trigger_stat_interrupt()
     });
-    
+
     if should_interrupt {
         request_lcd_interrupt();
     }
@@ -676,7 +676,7 @@ async fn execute_last_scanline() {
         // Check for LYC=LY interrupt
         state.ppu.should_trigger_stat_interrupt()
     });
-    
+
     if should_interrupt {
         request_lcd_interrupt();
     }
@@ -789,7 +789,7 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
     // Ensure minimum mode 3 time and cap maximum
     let minimum_mode_3 = 172;
     let maximum_mode_3 = 289;
-    
+
     if dots_spent < minimum_mode_3 {
         sleep_dots(minimum_mode_3 - dots_spent).await;
         dots_spent = minimum_mode_3;
@@ -1003,10 +1003,10 @@ async fn fetch_object_pixels(render_state: &mut PpuRenderState, obj: &ObjectData
     let scx = with_state(|state| state.ppu.scx);
     let obj_leftmost_pixel = (obj.x as i16 - 8).max(0) as u8;
     let tile_pixel_pos = (obj_leftmost_pixel + scx) % 8;
-    
+
     // 2. Count pixels strictly to the right of the object's leftmost pixel in that tile
     let pixels_to_right = 7 - tile_pixel_pos;
-    
+
     // 3. Subtract 2 and add to penalty (minimum 0)
     if pixels_to_right >= 2 {
         penalty += (pixels_to_right - 2) as u16;
