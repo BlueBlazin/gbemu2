@@ -761,9 +761,9 @@ async fn oam_scan(render_state: &mut PpuRenderState) {
 async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
     render_state.reset_for_scanline();
 
-    // Set the fetcher to start at the correct tile
+    // The fetcher's x is now correctly reset to 0 by reset_for_scanline.
+    // We only need to set the discard count based on SCX.
     let scx = with_state(|state| state.ppu.scx);
-    render_state.fetcher.x = (scx / 8) & 0x1F;
     render_state.scx_discard_count = scx % 8;
 
     let mut dots_spent = 0;
