@@ -656,7 +656,10 @@ async fn execute_vblank_scanline() {
 
     if ly == VISIBLE_SCANLINES {
         // First VBlank scanline - set mode and trigger interrupts
-        with_state_mut(|state| state.ppu.set_mode(MODE_VBLANK));
+        with_state_mut(|state| {
+            state.ppu.set_mode(MODE_VBLANK);
+            state.ppu.window_line = 0; // ADD THIS: Reset window line counter at VBlank start
+        });
 
         // Trigger VBlank interrupt
         request_vblank_interrupt();
@@ -695,7 +698,6 @@ async fn execute_last_scanline() {
         state.ppu.ly = 0;
         state.ppu.dots = 0;
         state.ppu.update_lyc_ly_flag();
-        state.ppu.window_line = 0;
 
         // Check for LYC=LY interrupt
         state.ppu.should_trigger_stat_interrupt()
