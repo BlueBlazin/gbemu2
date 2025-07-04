@@ -72,15 +72,15 @@ impl NoiseChannel {
     }
 
     pub fn calculate_period(&self) -> u32 {
-        // Frequency = 262144 / (divider * 2^shift) Hz
-        // Period (T-cycles) = 4194304 / Freq = 16 * divider * 2^shift
-        let divider = NOISE_DIVISORS[self.clock_divider as usize];
-        let shift = self.clock_shift;
-        if shift > 13 {
-            return 0;
-        } // Avoid excessive periods
+        let divisor = if self.clock_divider == 0 {
+            8
+        } else {
+            NOISE_DIVISORS[self.clock_divider as usize]
+        };
 
-        divider << shift
+        // Period (T-cycles)  = 16 × divisor × 2^shift
+        let base = 16 * divisor as u32;
+        base.checked_shl(self.clock_shift as u32).unwrap_or(0) // overflow → silence
     }
 
     pub fn clock_period(&mut self) {

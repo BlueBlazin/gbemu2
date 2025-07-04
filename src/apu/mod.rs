@@ -268,10 +268,48 @@ const CPU_FREQUENCY: u32 = 4194304; // Game Boy CPU frequency
 const CYCLES_PER_SAMPLE: u32 = CPU_FREQUENCY / SAMPLE_RATE; // ~87 cycles per sample
 
 // Audio buffer constants
-const BUFFER_SIZE: usize = 1024; // Target buffer size in samples
+const BUFFER_SIZE: usize = 4096; // Target buffer size in samples
 
 // Audio filtering constants
 const SMOOTHING_FACTOR: f32 = 0.95; // Low-pass filter coefficient (0.0 = no smoothing, 1.0 = no change)
+
+// High pass filter alpha
+const ALPHA: f32 = 0.995;
+
+#[derive(Debug, Clone)]
+pub struct HpFilter {
+    y_prev: f32, // previous output sample (y[n-1])
+    x_prev: f32, // previous input sample  (x[n-1])
+}
+
+impl HpFilter {
+    /// Create a new filter with zeroed state.
+    pub fn new() -> Self {
+        Self {
+            y_prev: 0.0,
+            x_prev: 0.0,
+        }
+    }
+
+    /// Step the filter: returns the high-pass-filtered sample.
+    ///
+    /// Formula (single-pole DC blocker):
+    ///     y[n] = x[n] − x[n−1] + α · y[n−1]
+    /// with α ≈ 0.995 for a ~20 Hz corner at 48 kHz.
+    #[inline]
+    pub fn step(&mut self, x: f32) -> f32 {
+        let y = x - self.x_prev + ALPHA * self.y_prev;
+        self.x_prev = x;
+        self.y_prev = y;
+        y
+    }
+
+    /// Reset internal history to silence.
+    pub fn reset(&mut self) {
+        self.y_prev = 0.0;
+        self.x_prev = 0.0;
+    }
+}
 
 // Simple audio filter for anti-aliasing and smoothing
 #[derive(Debug, Clone)]
@@ -333,6 +371,8 @@ pub struct ApuState {
     pub sample_accumulator: f32,
     pub sample_count: u32,
     pub audio_filter: AudioFilter,
+
+    pub hp_filter: HpFilter,
 }
 
 impl ApuState {
@@ -361,6 +401,7 @@ impl ApuState {
             sample_accumulator: 0.0,
             sample_count: 0,
             audio_filter: AudioFilter::new(),
+            hp_filter: HpFilter::new(),
         }
     }
 
@@ -479,9 +520,11 @@ impl ApuState {
 
         // Mix stereo to mono and apply filter
         let raw_sample = (left_mix + right_mix) * 0.5;
-        let final_sample = self.audio_filter.smooth_sample(raw_sample);
 
-        self.sample_accumulator += final_sample;
+        let mut hp_out = self.hp_filter.step(raw_sample);
+        hp_out = self.hp_filter.step(hp_out);
+
+        self.sample_accumulator += hp_out;
         self.sample_count += 1;
 
         // Downsample when we have enough samples
