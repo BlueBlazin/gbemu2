@@ -6,6 +6,7 @@ pub struct SquareChannel {
     // Channel state
     pub enabled: bool,
     pub dac_enabled: bool,
+    pub first_trigger: bool, // Track if channel has been triggered since power on
 
     // Duty and waveform
     pub duty: u8,      // 0-3 (duty cycle selection)
@@ -33,6 +34,7 @@ pub struct SquareChannel {
     pub sweep_step: u8,        // 0-7
     pub sweep_timer: u8,       // Current sweep timer
     pub sweep_shadow: u16,     // Shadow register for sweep
+    pub sweep_calculation_made: bool, // Track if calculation was made in subtraction mode
 }
 
 impl SquareChannel {
@@ -40,6 +42,7 @@ impl SquareChannel {
         Self {
             enabled: false,
             dac_enabled: false,
+            first_trigger: false,
             duty: 0,
             duty_step: 0,
             period: 0,
@@ -57,29 +60,33 @@ impl SquareChannel {
             sweep_step: 0,
             sweep_timer: 0,
             sweep_shadow: 0,
+            sweep_calculation_made: false,
         }
     }
 
     pub fn trigger(&mut self, has_sweep: bool) {
         self.enabled = self.dac_enabled;
+        self.first_trigger = true;
 
         // Reset length timer if it was 0
         if self.length_timer == 0 {
             self.length_timer = 64; // Max length for square channels
         }
 
-        // Reset period timer
-        self.period_timer = (2048 - self.period) * 4;
+        // Reset period timer but preserve the low 2 bits
+        let old_low_bits = self.period_timer & 0x03;
+        self.period_timer = ((2048 - self.period) * 4) | old_low_bits;
 
         // Reset envelope
-        self.envelope_timer = self.envelope_pace;
+        self.envelope_timer = if self.envelope_pace == 0 { 8 } else { self.envelope_pace };
         self.volume = self.initial_volume;
 
         // Reset sweep (CH1 only)
         if has_sweep {
             self.sweep_shadow = self.period;
-            self.sweep_timer = self.sweep_pace;
+            self.sweep_timer = if self.sweep_pace == 0 { 8 } else { self.sweep_pace };
             self.sweep_enabled = self.sweep_pace != 0 || self.sweep_step != 0;
+            self.sweep_calculation_made = false; // Reset calculation tracking
 
             if self.sweep_step != 0 {
                 self.calculate_sweep_frequency();
@@ -89,6 +96,8 @@ impl SquareChannel {
 
     pub fn calculate_sweep_frequency(&mut self) -> bool {
         let new_freq = if self.sweep_direction {
+            // Mark that we made a calculation in subtraction mode
+            self.sweep_calculation_made = true;
             self.sweep_shadow
                 .saturating_sub(self.sweep_shadow >> self.sweep_step)
         } else {
@@ -126,7 +135,7 @@ impl SquareChannel {
         }
 
         if self.sweep_timer == 0 {
-            self.sweep_timer = self.sweep_pace;
+            self.sweep_timer = if self.sweep_pace == 0 { 8 } else { self.sweep_pace };
 
             if self.sweep_enabled && self.sweep_pace != 0 {
                 if self.calculate_sweep_frequency() {
@@ -149,7 +158,7 @@ impl SquareChannel {
         }
 
         if self.envelope_timer == 0 {
-            self.envelope_timer = self.envelope_pace;
+            self.envelope_timer = if self.envelope_pace == 0 { 8 } else { self.envelope_pace };
 
             if self.envelope_direction && self.volume < 15 {
                 self.volume += 1;
@@ -169,6 +178,11 @@ impl SquareChannel {
     }
 
     pub fn clock_period(&mut self) {
+        // Duty cycle clocking is disabled until the first trigger
+        if !self.first_trigger {
+            return;
+        }
+
         if self.period_timer > 0 {
             self.period_timer -= 1;
         }
@@ -184,8 +198,15 @@ impl SquareChannel {
             return 0.0;
         }
 
+        // First duty step after power on is played as if it were 0
+        let effective_duty_step = if !self.first_trigger && self.duty_step == 0 {
+            0 // Play as duty cycle 0 (low)
+        } else {
+            self.duty_step
+        };
+
         // Use precomputed sample tables for direct float output
-        SQUARE_WAVE_TABLES[self.duty as usize][self.volume as usize][self.duty_step as usize]
+        SQUARE_WAVE_TABLES[self.duty as usize][self.volume as usize][effective_duty_step as usize]
     }
 
     pub fn update_dac(&mut self, nr2_value: u8) {

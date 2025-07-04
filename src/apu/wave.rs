@@ -38,6 +38,11 @@ impl WaveChannel {
     }
 
     pub fn trigger(&mut self) {
+        // If channel was enabled and reading from wave RAM, corruption occurs
+        if self.enabled {
+            self.corrupt_wave_ram();
+        }
+
         // Ch3 is enabled (if DAC is on)
         self.enabled = self.dac_enabled;
 
@@ -50,11 +55,12 @@ impl WaveChannel {
         self.period_timer = (2048 - self.period) * 2; // 2 T-cycles per period step
 
         // Wave RAM index is reset, but its not refilled
-        // Sample #0 is skipped when first starting up CH3
+        // The first sample to play is the previous one still in the sample buffer
+        // Sample #0 is skipped when first incrementing
         self.sample_index = 0;
 
-        // Don't read sample yet - sample #0 will be skipped on first increment
-        // The buffer retains whatever was last read
+        // Don't read sample yet - the buffer retains whatever was last read
+        // This means the first sample played after trigger is the old buffer contents
     }
 
     pub fn clock_period(&mut self) {
@@ -182,5 +188,25 @@ impl WaveChannel {
     // Helper method to check if length should be enabled
     pub fn set_length_enabled(&mut self, nr34_value: u8) {
         self.length_enabled = (nr34_value & 0x40) != 0;
+    }
+
+    // Wave RAM corruption when triggering while channel is reading
+    fn corrupt_wave_ram(&mut self) {
+        let byte_index = (self.sample_index / 2) as usize;
+        
+        if byte_index < 4 {
+            // If reading one of the first four bytes, only first byte is rewritten
+            let byte_value = self.wave_ram[byte_index];
+            self.wave_ram[0] = byte_value;
+        } else {
+            // If reading one of the later 12 bytes, the first FOUR bytes are rewritten
+            // with the four aligned bytes that the read was from
+            let aligned_start = (byte_index / 4) * 4; // 4, 8, or 12
+            for i in 0..4 {
+                if aligned_start + i < 16 {
+                    self.wave_ram[i] = self.wave_ram[aligned_start + i];
+                }
+            }
+        }
     }
 }

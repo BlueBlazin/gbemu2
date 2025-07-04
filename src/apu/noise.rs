@@ -64,7 +64,7 @@ impl NoiseChannel {
         self.period_timer = self.calculate_period();
 
         // Reset envelope
-        self.envelope_timer = self.envelope_pace;
+        self.envelope_timer = if self.envelope_pace == 0 { 8 } else { self.envelope_pace };
         self.volume = self.initial_volume;
 
         // Reset LFSR to all 1s
@@ -72,18 +72,15 @@ impl NoiseChannel {
     }
 
     fn calculate_period(&self) -> u32 {
-        // r_eff = 0 : ½  ⇒ 4   (not 8!)
-        let r_eff = match self.clock_divider {
-            0 => 4,
-            1..=7 => NOISE_DIVISORS[self.clock_divider as usize],
-            _ => 8, // should never happen
-        };
-
-        let base = 16 * r_eff as u32;
-        base << self.clock_shift // saturates naturally; overflow ⇒ silence
+        NOISE_DIVISORS[self.clock_divider as usize] << self.clock_shift
     }
 
     pub fn clock_period(&mut self) {
+        // Using a noise channel clock shift of 14 or 15 results in the LFSR receiving no clocks
+        if self.clock_shift >= 14 {
+            return;
+        }
+
         if self.period_timer > 0 {
             self.period_timer -= 1;
         }
@@ -104,12 +101,12 @@ impl NoiseChannel {
         self.lfsr >>= 1;
 
         // Set bit 14 (new MSB of 15-bit LFSR) to the XOR result
-        self.lfsr |= (xor_result << 14);
+        self.lfsr |= xor_result << 14;
 
         // In 7-bit mode, also copy the result to bit 6
         if self.lfsr_7bit {
             self.lfsr &= !(1 << 6); // Clear bit 6
-            self.lfsr |= (xor_result << 6);
+            self.lfsr |= xor_result << 6;
         }
     }
 
@@ -123,11 +120,7 @@ impl NoiseChannel {
         }
 
         if self.envelope_timer == 0 {
-            self.envelope_timer = if self.envelope_pace > 0 {
-                self.envelope_pace
-            } else {
-                8
-            };
+            self.envelope_timer = if self.envelope_pace == 0 { 8 } else { self.envelope_pace };
 
             if self.envelope_direction && self.volume < 15 {
                 self.volume += 1;

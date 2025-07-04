@@ -395,3 +395,16 @@ Noise divisors example from another emulator's source:
 ```rs
 const DIVISORS: [usize; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 ```
+
+## APU Obscure Behavior
+
+- The volume envelope and sweep timers treat a period of 0 as 8.
+- Just after powering on, the first duty step of Ch1 and Ch2 after they are triggered for the first time is played as if it were 0. Also, the duty cycle clocking is disabled until the first trigger.
+- When triggering Ch3, the first sample to play is the previous one still in the high nibble of the sample buffer, and the next sample is the second nibble from the wave table. This is because it doesn’t load the first byte on trigger like it should. The first nibble from the wave table is thus not played until the waveform loops.
+- When triggering Ch1 and Ch2, the low two bits of the frequency timer are NOT modified.
+- Extra length clocking occurs when writing to NRx4 when the DIV-APU next step is one that doesn’t clock the length timer. In this case, if the length timer was PREVIOUSLY disabled and now enabled and the length timer is not zero, it is decremented. If this decrement makes it zero and trigger is clear, the channel is disabled.
+- If a channel is triggered when the DIV-APU next step is one that doesn’t clock the length timer and the length timer is now enabled and length is being set to 64 (256 for wave channel) because it was previously zero, it is set to 63 instead (255 for wave channel).
+- If a channel is triggered when the DIV-APU next step will clock the volume envelope, the envelope’s timer is reloaded with one greater than it would have been.
+  Using a noise channel clock shift of 14 or 15 results in the LFSR receiving no clocks.
+- Clearing the sweep direction bit in NR10 after at least one sweep calculation has been made using the substraction mode since the last trigger causes the channel to be immediately disabled. This prevents you from having the sweep lower the frequency then raise the frequency without a trigger inbetween.
+- Triggering the wave channel on the DMG while it reads a sample byte will alter the first four bytes of wave RAM. If the channel was reading one of the first four bytes, the only first byte will be rewritten with the byte being read. If the channel was reading one of the later 12 bytes, the first FOUR bytes of wave RAM will be rewritten with the four aligned bytes that the read was from (bytes 4-7, 8-11, or 12-15); for example if it were reading byte 9 when it was retriggered, the first four bytes would be rewritten with the contents of bytes 8-11. To avoid this corruption you should stop the wave by writing 0 then $80 to NR30 before triggering it again.
