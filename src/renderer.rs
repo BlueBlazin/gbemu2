@@ -1,13 +1,15 @@
 use crate::emulator::{with_state, with_state_mut};
 use crate::joypad::JoypadButton;
 use crate::texture_pool::{TextureId, TextureKey, TexturePool, TexturePoolConfig};
+use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use sdl2::event::Event as SdlEvent;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::render::WindowCanvas;
 use sdl2::{EventPump, Sdl};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 // Game Boy display constants
 pub const GB_WIDTH: u32 = 160;
@@ -25,6 +27,68 @@ const COLORS: [(u8, u8, u8); 4] = [
     (60, 118, 96),  // Color 2
     (46, 97, 90),   // Color 3 (darkest)
 ];
+
+// Audio callback for SDL
+pub struct AudioOutputCallback {
+    buffer: Arc<Mutex<VecDeque<f32>>>,
+}
+
+impl AudioCallback for AudioOutputCallback {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        let mut buffer = self.buffer.lock().unwrap();
+
+        for sample in out.iter_mut() {
+            *sample = buffer.pop_front().unwrap_or(0.0);
+        }
+    }
+}
+
+pub struct AudioSystem {
+    _device: AudioDevice<AudioOutputCallback>,
+    buffer: Arc<Mutex<VecDeque<f32>>>,
+}
+
+impl AudioSystem {
+    pub fn new(sdl_context: &Sdl) -> Result<Self, String> {
+        let audio_subsystem = sdl_context.audio().map_err(|e| e.to_string())?;
+
+        let desired_spec = AudioSpecDesired {
+            freq: Some(48000),
+            channels: Some(1), // Mono for now
+            samples: Some(1024),
+        };
+
+        let buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let callback_buffer = buffer.clone();
+
+        let device = audio_subsystem
+            .open_playback(None, &desired_spec, |_spec| AudioOutputCallback {
+                buffer: callback_buffer,
+            })
+            .map_err(|e| e.to_string())?;
+
+        device.resume();
+
+        Ok(AudioSystem {
+            _device: device,
+            buffer,
+        })
+    }
+
+    pub fn queue_samples(&self, samples: &[f32]) {
+        let mut buffer = self.buffer.lock().unwrap();
+        for &sample in samples {
+            buffer.push_back(sample);
+        }
+
+        // Prevent buffer from growing too large
+        while buffer.len() > 8192 {
+            buffer.pop_front();
+        }
+    }
+}
 
 pub struct SdlSystem {
     _context: Sdl,
@@ -55,51 +119,61 @@ impl SdlSystem {
                     match keycode {
                         Keycode::Escape => return false,
                         // Joypad button mappings
-                        Keycode::A => {
-                            with_state_mut(|state| {
-                                state.joypad.set_button(JoypadButton::A, true);
-                                let p1_select = state.mmu.io_registers[0x00];
-                                state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
-                            })
-                        }
-                        Keycode::S => {
-                            with_state_mut(|state| {
-                                state.joypad.set_button(JoypadButton::B, true);
-                                let p1_select = state.mmu.io_registers[0x00];
-                                state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
-                            })
-                        }
-                        Keycode::Up => {
-                            with_state_mut(|state| {
-                                state.joypad.set_button(JoypadButton::Up, true);
-                                let p1_select = state.mmu.io_registers[0x00];
-                                state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
-                            })
-                        }
+                        Keycode::A => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::A, true);
+                            let p1_select = state.mmu.io_registers[0x00];
+                            state
+                                .joypad
+                                .check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                        }),
+                        Keycode::S => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::B, true);
+                            let p1_select = state.mmu.io_registers[0x00];
+                            state
+                                .joypad
+                                .check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                        }),
+                        Keycode::Up => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Up, true);
+                            let p1_select = state.mmu.io_registers[0x00];
+                            state
+                                .joypad
+                                .check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                        }),
                         Keycode::Down => with_state_mut(|state| {
                             state.joypad.set_button(JoypadButton::Down, true);
                             let p1_select = state.mmu.io_registers[0x00];
-                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                            state
+                                .joypad
+                                .check_and_trigger_interrupt(p1_select, &mut state.interrupts);
                         }),
                         Keycode::Left => with_state_mut(|state| {
                             state.joypad.set_button(JoypadButton::Left, true);
                             let p1_select = state.mmu.io_registers[0x00];
-                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                            state
+                                .joypad
+                                .check_and_trigger_interrupt(p1_select, &mut state.interrupts);
                         }),
                         Keycode::Right => with_state_mut(|state| {
                             state.joypad.set_button(JoypadButton::Right, true);
                             let p1_select = state.mmu.io_registers[0x00];
-                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                            state
+                                .joypad
+                                .check_and_trigger_interrupt(p1_select, &mut state.interrupts);
                         }),
                         Keycode::Return => with_state_mut(|state| {
                             state.joypad.set_button(JoypadButton::Start, true);
                             let p1_select = state.mmu.io_registers[0x00];
-                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                            state
+                                .joypad
+                                .check_and_trigger_interrupt(p1_select, &mut state.interrupts);
                         }),
                         Keycode::Space => with_state_mut(|state| {
                             state.joypad.set_button(JoypadButton::Select, true);
                             let p1_select = state.mmu.io_registers[0x00];
-                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                            state
+                                .joypad
+                                .check_and_trigger_interrupt(p1_select, &mut state.interrupts);
                         }),
                         _ => {}
                     }
@@ -168,6 +242,7 @@ pub struct Renderer {
     grid_lines: Vec<(sdl2::rect::Point, sdl2::rect::Point)>,
     border_horizontal: u32,
     border_vertical: u32,
+    audio_system: Option<AudioSystem>,
 }
 
 impl Renderer {
@@ -429,12 +504,19 @@ impl Renderer {
             ));
         }
 
+        // Initialize audio system
+        let audio_system = AudioSystem::new(sdl_context).ok();
+        if audio_system.is_none() {
+            eprintln!("Warning: Failed to initialize audio system");
+        }
+
         Ok(Renderer {
             windows,
             scale,
             grid_lines,
             border_horizontal,
             border_vertical,
+            audio_system,
         })
     }
 
@@ -469,6 +551,12 @@ impl Renderer {
         // This ensures that if rendering fails, the flags remain dirty for retry
 
         Ok(())
+    }
+
+    pub fn queue_audio_samples(&self, samples: &[f32]) {
+        if let Some(ref audio_system) = self.audio_system {
+            audio_system.queue_samples(samples);
+        }
     }
 
     /// Ensure a texture is allocated for the given window

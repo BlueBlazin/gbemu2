@@ -1,3 +1,4 @@
+use crate::apu::ApuState;
 use crate::dma::DmaState;
 use crate::interrupts::InterruptState;
 use crate::joypad::JoypadState;
@@ -237,6 +238,7 @@ pub struct EmulatorState {
     pub timer: TimerState,
     pub dma: DmaState,
     pub joypad: JoypadState,
+    pub apu: ApuState,
     pub debug_mode: bool,
     pub opcode_log: Vec<(u16, u8)>, // (PC, opcode)
     pub render_dirty_flags: RenderDirtyFlags,
@@ -258,6 +260,7 @@ impl EmulatorState {
             timer: TimerState::new(),
             dma: DmaState::new(),
             joypad: JoypadState::new(),
+            apu: ApuState::new(),
             debug_mode: false,
             opcode_log: Vec::new(),
             render_dirty_flags: RenderDirtyFlags::new(),
@@ -326,6 +329,10 @@ impl EmulatorState {
             crate::ppu::OBP1_REGISTER => self.ppu.obp1,
             crate::ppu::WY_REGISTER => self.ppu.wy,
             crate::ppu::WX_REGISTER => self.ppu.wx,
+            // APU registers
+            crate::apu::NR10_REGISTER..=crate::apu::NR52_REGISTER => {
+                crate::apu::read_apu_register(address, &self.apu)
+            }
             _ => self.mmu.io_registers[(address - 0xFF00) as usize],
         }
     }
@@ -378,6 +385,10 @@ impl EmulatorState {
             }
             crate::ppu::WY_REGISTER => self.ppu.wy = value,
             crate::ppu::WX_REGISTER => self.ppu.wx = value,
+            // APU registers
+            crate::apu::NR10_REGISTER..=crate::apu::NR52_REGISTER => {
+                crate::apu::write_apu_register(address, value, &mut self.apu)
+            }
             _ => {
                 if address >= 0xFF00 && address <= 0xFF7F {
                     self.mmu.io_registers[(address - 0xFF00) as usize] = value;

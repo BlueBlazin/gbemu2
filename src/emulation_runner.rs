@@ -135,7 +135,11 @@ impl EmulationRunner {
                     with_state_mut(|state| state.clear_all_dirty_flags());
                 }
                 Event::AudioBufferFull => {
-                    // TODO: Handle audio when APU is implemented
+                    // Drain the audio buffer and send to audio system
+                    let audio_buffer = with_state_mut(|state| state.apu.drain_buffer());
+                    if !audio_buffer.is_empty() {
+                        self.renderer.queue_audio_samples(&audio_buffer);
+                    }
                 }
                 Event::MaxCycles => {
                     // We've executed all requested cycles
