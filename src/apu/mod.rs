@@ -268,7 +268,7 @@ const CPU_FREQUENCY: u32 = 4194304; // Game Boy CPU frequency
 const CYCLES_PER_SAMPLE: u32 = CPU_FREQUENCY / SAMPLE_RATE; // ~87 cycles per sample
 
 // Audio buffer constants
-const BUFFER_SIZE: usize = 4096; // Target buffer size in samples
+const BUFFER_SIZE: usize = 1024; // Target buffer size in samples
 
 // Audio filtering constants
 const SMOOTHING_FACTOR: f32 = 0.95; // Low-pass filter coefficient (0.0 = no smoothing, 1.0 = no change)
@@ -372,7 +372,8 @@ pub struct ApuState {
     pub sample_count: u32,
     pub audio_filter: AudioFilter,
 
-    pub hp_filter: HpFilter,
+    pub hp_filter1: HpFilter,
+    pub hp_filter2: HpFilter,
 }
 
 impl ApuState {
@@ -401,7 +402,8 @@ impl ApuState {
             sample_accumulator: 0.0,
             sample_count: 0,
             audio_filter: AudioFilter::new(),
-            hp_filter: HpFilter::new(),
+            hp_filter1: HpFilter::new(),
+            hp_filter2: HpFilter::new(),
         }
     }
 
@@ -479,62 +481,69 @@ impl ApuState {
             return;
         }
 
-        // Get channel outputs (already normalized float values)
-        let ch1_out = self.ch1.output();
-        let ch2_out = self.ch2.output();
-        let ch3_out = self.ch3.output();
-        let ch4_out = self.ch4.output();
+        // ───── 1. mix the channels (already in -1.0 … +1.0 range) ─────
+        let ch1 = self.ch1.output();
+        let ch2 = self.ch2.output();
+        let ch3 = self.ch3.output();
+        let ch4 = self.ch4.output();
 
-        // Mix channels with proper panning
-        let mut left_mix = 0.0;
-        let mut right_mix = 0.0;
+        let mut left = 0.0;
+        let mut right = 0.0;
 
         if self.ch1_left {
-            left_mix += ch1_out;
+            left += ch1
         }
         if self.ch1_right {
-            right_mix += ch1_out;
+            right += ch1
         }
         if self.ch2_left {
-            left_mix += ch2_out;
+            left += ch2
         }
         if self.ch2_right {
-            right_mix += ch2_out;
+            right += ch2
         }
         if self.ch3_left {
-            left_mix += ch3_out;
+            left += ch3
         }
         if self.ch3_right {
-            right_mix += ch3_out;
+            right += ch3
         }
         if self.ch4_left {
-            left_mix += ch4_out;
+            left += ch4
         }
         if self.ch4_right {
-            right_mix += ch4_out;
+            right += ch4
         }
 
-        // Apply master volume (Game Boy master volume is 0-7)
-        left_mix *= (self.master_volume_left as f32 + 1.0) / 8.0;
-        right_mix *= (self.master_volume_right as f32 + 1.0) / 8.0;
+        // apply master volume (0-7 ⇒ 1/8 … 1)
+        left *= (self.master_volume_left as f32 + 1.0) / 8.0;
+        right *= (self.master_volume_right as f32 + 1.0) / 8.0;
 
-        // Mix stereo to mono and apply filter
-        let raw_sample = (left_mix + right_mix) * 0.5;
+        // down-mix to mono for now
+        let raw = (left + right) * 0.5;
 
-        let mut hp_out = self.hp_filter.step(raw_sample);
-        hp_out = self.hp_filter.step(hp_out);
-
-        self.sample_accumulator += hp_out;
+        // ───── 2. accumulate over one PCM frame (≈87 T-cycles) ─────
+        self.sample_accumulator += raw;
         self.sample_count += 1;
 
-        // Downsample when we have enough samples
         if self.sample_count >= CYCLES_PER_SAMPLE {
-            let averaged_sample = if self.sample_count > 0 {
-                self.sample_accumulator / (self.sample_count as f32)
-            } else {
-                0.0
-            };
-            self.audio_buffer.push(averaged_sample);
+            // average the 87 CPU-rate samples
+            let mut sample = self.sample_accumulator / self.sample_count as f32;
+
+            // 2.a low-pass anti-alias (simple leaky integrator)
+            sample = self.audio_filter.smooth_sample(sample);
+
+            // 2.b *two* independent first-order high-pass filters (DMG hardware)
+            sample = self.hp_filter1.step(sample);
+            sample = self.hp_filter2.step(sample);
+
+            // 2.c hard-clamp – keeps SDL happy
+            sample = sample.clamp(-1.0, 1.0);
+
+            // push to output FIFO
+            self.audio_buffer.push(sample);
+
+            // reset accumulators for the next frame
             self.sample_accumulator = 0.0;
             self.sample_count = 0;
         }
@@ -550,57 +559,46 @@ impl ApuState {
 }
 
 pub async fn apu() {
-    let mut div_apu_counter = 0u32;
+    // One PCM sample corresponds to this many CPU T-cycles at 48 kHz.
+    const STEP: usize = CYCLES_PER_SAMPLE as usize; // 4 194 304 / 48 000 ≃ 87
+    let mut div_apu_counter: u32 = 0; // DIV-APU runs at 512 Hz
 
     loop {
-        sleep(4).await; // 1 M-cycle (4 T-cycles)
+        // Sleep until the next audio quantum
+        sleep(STEP).await;
 
-        // Check if frame sequencer needs to run (DIV-APU runs at 512 Hz)
-        div_apu_counter += 4; // We advanced 4 T-cycles
+        div_apu_counter += STEP as u32;
         let needs_frame_sequencer = if div_apu_counter >= 8192 {
-            div_apu_counter = 0;
+            // 4 419 4304 / 512
+            div_apu_counter -= 8192;
             true
         } else {
             false
         };
 
-        // Combine all state access into a single call to avoid RefCell conflicts
-        let should_emit_event = with_state_mut(|state| {
-            // Check if APU is enabled
+        let buffer_full = with_state_mut(|state| {
             if !state.apu.master_enable {
-                return false;
+                return false; // APU powered down
             }
 
-            // Clock period timers 4 times to maintain accuracy (batch processing)
-            for _ in 0..4 {
+            for _ in 0..STEP {
                 state.apu.ch1.clock_period();
                 state.apu.ch2.clock_period();
                 state.apu.ch3.clock_period();
                 state.apu.ch4.clock_period();
 
-                // Mix audio sample for each T-cycle
-                state.apu.mix_sample();
+                state.apu.mix_sample(); // one raw DAC sample
             }
 
-            // Check for buffer full event
             state.apu.is_buffer_full()
         });
 
-        // Check if we need to handle any events or timing
-        if !with_state(|state| state.apu.master_enable) {
-            continue;
-        }
-
-        // Emit audio buffer full event if needed
-        if should_emit_event {
+        if buffer_full {
             crate::driver::emit_event(crate::driver::Event::AudioBufferFull);
         }
 
-        // Run frame sequencer if needed
         if needs_frame_sequencer {
-            with_state_mut(|state| {
-                state.apu.frame_sequencer_clock();
-            });
+            with_state_mut(|state| state.apu.frame_sequencer_clock());
         }
     }
 }

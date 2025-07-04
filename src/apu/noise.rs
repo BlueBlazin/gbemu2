@@ -71,16 +71,16 @@ impl NoiseChannel {
         self.lfsr = 0xFFFF;
     }
 
-    pub fn calculate_period(&self) -> u32 {
-        let divisor = if self.clock_divider == 0 {
-            8
-        } else {
-            NOISE_DIVISORS[self.clock_divider as usize]
+    fn calculate_period(&self) -> u32 {
+        // r_eff = 0 : ½  ⇒ 4   (not 8!)
+        let r_eff = match self.clock_divider {
+            0 => 4,
+            1..=7 => NOISE_DIVISORS[self.clock_divider as usize],
+            _ => 8, // should never happen
         };
 
-        // Period (T-cycles)  = 16 × divisor × 2^shift
-        let base = 16 * divisor as u32;
-        base.checked_shl(self.clock_shift as u32).unwrap_or(0) // overflow → silence
+        let base = 16 * r_eff as u32;
+        base << self.clock_shift // saturates naturally; overflow ⇒ silence
     }
 
     pub fn clock_period(&mut self) {

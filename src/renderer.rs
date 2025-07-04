@@ -28,7 +28,6 @@ const COLORS: [(u8, u8, u8); 4] = [
     (46, 97, 90),   // Color 3 (darkest)
 ];
 
-
 // Audio callback for SDL
 pub struct AudioOutputCallback {
     buffer: Arc<Mutex<VecDeque<f32>>>,
@@ -39,7 +38,7 @@ impl AudioCallback for AudioOutputCallback {
 
     fn callback(&mut self, out: &mut [f32]) {
         let mut buffer = self.buffer.lock().unwrap();
-        
+
         // Check if we have enough samples to fill the request
         let available_samples = buffer.len();
         let requested_samples = out.len();
@@ -72,7 +71,7 @@ impl AudioSystem {
         let audio_subsystem = sdl_context.audio().map_err(|e| e.to_string())?;
 
         let desired_spec = AudioSpecDesired {
-            freq: Some(48000),
+            freq: Some(48_000),
             channels: Some(1), // Mono for now
             samples: Some(1024),
         };
@@ -96,7 +95,7 @@ impl AudioSystem {
 
     pub fn queue_samples(&self, samples: &[f32]) {
         let mut buffer = self.buffer.lock().unwrap();
-        
+
         // Add new samples to the buffer
         for &sample in samples {
             buffer.push_back(sample);
