@@ -1,5 +1,5 @@
-use crate::emulator::with_state;
-use crate::joypad::{update_joypad_button, JoypadButton};
+use crate::emulator::{with_state, with_state_mut};
+use crate::joypad::JoypadButton;
 use crate::texture_pool::{TextureId, TextureKey, TexturePool, TexturePoolConfig};
 use sdl2::event::Event as SdlEvent;
 use sdl2::keyboard::Keycode;
@@ -55,14 +55,52 @@ impl SdlSystem {
                     match keycode {
                         Keycode::Escape => return false,
                         // Joypad button mappings
-                        Keycode::A => update_joypad_button(JoypadButton::A, true),
-                        Keycode::S => update_joypad_button(JoypadButton::B, true),
-                        Keycode::Up => update_joypad_button(JoypadButton::Up, true),
-                        Keycode::Down => update_joypad_button(JoypadButton::Down, true),
-                        Keycode::Left => update_joypad_button(JoypadButton::Left, true),
-                        Keycode::Right => update_joypad_button(JoypadButton::Right, true),
-                        Keycode::Return => update_joypad_button(JoypadButton::Start, true),
-                        Keycode::Space => update_joypad_button(JoypadButton::Select, true),
+                        Keycode::A => {
+                            with_state_mut(|state| {
+                                state.joypad.set_button(JoypadButton::A, true);
+                                let p1_select = state.mmu.io_registers[0x00];
+                                state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                            })
+                        }
+                        Keycode::S => {
+                            with_state_mut(|state| {
+                                state.joypad.set_button(JoypadButton::B, true);
+                                let p1_select = state.mmu.io_registers[0x00];
+                                state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                            })
+                        }
+                        Keycode::Up => {
+                            with_state_mut(|state| {
+                                state.joypad.set_button(JoypadButton::Up, true);
+                                let p1_select = state.mmu.io_registers[0x00];
+                                state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                            })
+                        }
+                        Keycode::Down => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Down, true);
+                            let p1_select = state.mmu.io_registers[0x00];
+                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                        }),
+                        Keycode::Left => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Left, true);
+                            let p1_select = state.mmu.io_registers[0x00];
+                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                        }),
+                        Keycode::Right => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Right, true);
+                            let p1_select = state.mmu.io_registers[0x00];
+                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                        }),
+                        Keycode::Return => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Start, true);
+                            let p1_select = state.mmu.io_registers[0x00];
+                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                        }),
+                        Keycode::Space => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Select, true);
+                            let p1_select = state.mmu.io_registers[0x00];
+                            state.joypad.check_and_trigger_interrupt(p1_select, &mut state.interrupts);
+                        }),
                         _ => {}
                     }
                 }
@@ -71,15 +109,31 @@ impl SdlSystem {
                     ..
                 } => {
                     match keycode {
-                        // Joypad button mappings
-                        Keycode::A => update_joypad_button(JoypadButton::A, false),
-                        Keycode::S => update_joypad_button(JoypadButton::B, false),
-                        Keycode::Up => update_joypad_button(JoypadButton::Up, false),
-                        Keycode::Down => update_joypad_button(JoypadButton::Down, false),
-                        Keycode::Left => update_joypad_button(JoypadButton::Left, false),
-                        Keycode::Right => update_joypad_button(JoypadButton::Right, false),
-                        Keycode::Return => update_joypad_button(JoypadButton::Start, false),
-                        Keycode::Space => update_joypad_button(JoypadButton::Select, false),
+                        // Joypad button mappings - no interrupt on key release
+                        Keycode::A => {
+                            with_state_mut(|state| state.joypad.set_button(JoypadButton::A, false))
+                        }
+                        Keycode::S => {
+                            with_state_mut(|state| state.joypad.set_button(JoypadButton::B, false))
+                        }
+                        Keycode::Up => {
+                            with_state_mut(|state| state.joypad.set_button(JoypadButton::Up, false))
+                        }
+                        Keycode::Down => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Down, false)
+                        }),
+                        Keycode::Left => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Left, false)
+                        }),
+                        Keycode::Right => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Right, false)
+                        }),
+                        Keycode::Return => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Start, false)
+                        }),
+                        Keycode::Space => with_state_mut(|state| {
+                            state.joypad.set_button(JoypadButton::Select, false)
+                        }),
                         _ => {}
                     }
                 }

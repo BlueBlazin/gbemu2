@@ -300,7 +300,11 @@ impl EmulatorState {
     // Internal I/O register handling
     fn read_io_register(&self, address: u16) -> u8 {
         match address {
-            crate::io::P1_REGISTER => self.mmu.io_registers[0x00], // P1 (FF00)
+            crate::io::P1_REGISTER => {
+                // Calculate P1 value based on current joypad state and selection
+                let p1_select = self.mmu.io_registers[0x00];
+                self.joypad.calculate_p1(p1_select)
+            }
             crate::io::IF_REGISTER => self.interrupts.if_reg,
             crate::io::IE_REGISTER => self.interrupts.ie,
             crate::timer::DIV_REGISTER
@@ -329,8 +333,9 @@ impl EmulatorState {
     fn write_io_register(&mut self, address: u16, value: u8) {
         match address {
             crate::io::P1_REGISTER => {
-                // Only bits 4-5 are writable for P1 register
-                self.mmu.io_registers[0x00] = (value & 0xF0) | (self.mmu.io_registers[0x00] & 0x0F);
+                // Only bits 4-5 are writable for P1 register (selection bits)
+                // Store the selection bits, the lower nibble will be calculated on read
+                self.mmu.io_registers[0x00] = (value & 0x30) | 0xC0; // Keep bits 6-7 high, bits 0-3 are calculated on read
             }
             crate::io::IF_REGISTER => self.interrupts.if_reg = value,
             crate::io::IE_REGISTER => self.interrupts.ie = value,

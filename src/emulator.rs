@@ -1,6 +1,6 @@
 use crate::driver::Driver;
 use crate::state::EmulatorState;
-use crate::{cpu, dma, joypad, ppu, timer};
+use crate::{cpu, dma, ppu, timer};
 use std::cell::RefCell;
 
 thread_local! {
@@ -41,7 +41,6 @@ pub fn create_driver() -> Driver {
     driver.spawn(ppu::ppu());
     driver.spawn(timer::timer());
     driver.spawn(dma::dma_component());
-    driver.spawn(joypad::joypad_handler());
     driver
 }
 
