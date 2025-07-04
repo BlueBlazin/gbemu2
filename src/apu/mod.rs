@@ -1,9 +1,11 @@
 use crate::driver::sleep;
 use crate::emulator::{with_state, with_state_mut};
 
+pub mod noise;
 pub mod square;
 pub mod wave;
 
+pub use noise::NoiseChannel;
 pub use square::SquareChannel;
 pub use wave::WaveChannel;
 
@@ -247,6 +249,11 @@ pub const NR32_REGISTER: u16 = 0xFF1C; // CH3 Volume
 pub const NR33_REGISTER: u16 = 0xFF1D; // CH3 Period Low
 pub const NR34_REGISTER: u16 = 0xFF1E; // CH3 Period High/Control
 
+pub const NR41_REGISTER: u16 = 0xFF20; // CH4 Length
+pub const NR42_REGISTER: u16 = 0xFF21; // CH4 Volume/Envelope
+pub const NR43_REGISTER: u16 = 0xFF22; // CH4 Frequency/Randomness
+pub const NR44_REGISTER: u16 = 0xFF23; // CH4 Control
+
 // Wave RAM registers (FF30-FF3F)
 pub const WAVE_RAM_START: u16 = 0xFF30;
 pub const WAVE_RAM_END: u16 = 0xFF3F;
@@ -308,11 +315,14 @@ pub struct ApuState {
     pub ch2_right: bool,
     pub ch3_left: bool,
     pub ch3_right: bool,
+    pub ch4_left: bool,
+    pub ch4_right: bool,
 
     // Channels
     pub ch1: SquareChannel,
     pub ch2: SquareChannel,
     pub ch3: WaveChannel,
+    pub ch4: NoiseChannel,
 
     // Frame sequencer
     pub frame_sequencer_step: u8,   // 0-7
@@ -339,9 +349,12 @@ impl ApuState {
             ch2_right: false,
             ch3_left: false,
             ch3_right: false,
+            ch4_left: false,
+            ch4_right: false,
             ch1: SquareChannel::new(),
             ch2: SquareChannel::new(),
             ch3: WaveChannel::new(),
+            ch4: NoiseChannel::new(),
             frame_sequencer_step: 0,
             frame_sequencer_timer: 0,
             audio_buffer: Vec::with_capacity(BUFFER_SIZE),
@@ -363,6 +376,10 @@ impl ApuState {
         self.ch3.enabled
     }
 
+    pub fn is_ch4_enabled(&self) -> bool {
+        self.ch4.enabled
+    }
+
     pub fn frame_sequencer_clock(&mut self) {
         match self.frame_sequencer_step {
             0 => {
@@ -370,6 +387,7 @@ impl ApuState {
                 self.ch1.clock_length();
                 self.ch2.clock_length();
                 self.ch3.clock_length();
+                self.ch4.clock_length();
             }
             1 => {
                 // Nothing
@@ -379,6 +397,7 @@ impl ApuState {
                 self.ch1.clock_length();
                 self.ch2.clock_length();
                 self.ch3.clock_length();
+                self.ch4.clock_length();
                 self.ch1.clock_sweep();
             }
             3 => {
@@ -389,6 +408,7 @@ impl ApuState {
                 self.ch1.clock_length();
                 self.ch2.clock_length();
                 self.ch3.clock_length();
+                self.ch4.clock_length();
             }
             5 => {
                 // Nothing
@@ -398,12 +418,14 @@ impl ApuState {
                 self.ch1.clock_length();
                 self.ch2.clock_length();
                 self.ch3.clock_length();
+                self.ch4.clock_length();
                 self.ch1.clock_sweep();
             }
             7 => {
                 // Envelope
                 self.ch1.clock_envelope();
                 self.ch2.clock_envelope();
+                self.ch4.clock_envelope();
             }
             _ => {}
         }
@@ -420,6 +442,7 @@ impl ApuState {
         let ch1_out = self.ch1.output();
         let ch2_out = self.ch2.output();
         let ch3_out = self.ch3.output();
+        let ch4_out = self.ch4.output();
 
         // Mix channels with proper panning
         let mut left_mix = 0.0;
@@ -442,6 +465,12 @@ impl ApuState {
         }
         if self.ch3_right {
             right_mix += ch3_out;
+        }
+        if self.ch4_left {
+            left_mix += ch4_out;
+        }
+        if self.ch4_right {
+            right_mix += ch4_out;
         }
 
         // Apply master volume (Game Boy master volume is 0-7)
@@ -504,6 +533,7 @@ pub async fn apu() {
                 state.apu.ch1.clock_period();
                 state.apu.ch2.clock_period();
                 state.apu.ch3.clock_period();
+                state.apu.ch4.clock_period();
 
                 // Mix audio sample for each T-cycle
                 state.apu.mix_sample();
@@ -602,6 +632,11 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
             }) | 0xBF // Most bits read as 1
         }
 
+        NR41_REGISTER => 0xFF, // Write-only
+        NR42_REGISTER => apu_state.ch4.read_volume_envelope(),
+        NR43_REGISTER => apu_state.ch4.read_frequency_randomness(),
+        NR44_REGISTER => apu_state.ch4.read_control(),
+
         NR50_REGISTER => {
             (if apu_state.vin_left { 0x80 } else { 0 })
                 | (apu_state.master_volume_left << 4)
@@ -609,24 +644,25 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
                 | apu_state.master_volume_right
         }
         NR51_REGISTER => {
-            (if apu_state.ch2_left { 0x20 } else { 0 })
-                | (if apu_state.ch1_left { 0x10 } else { 0 })
+            (if apu_state.ch4_left { 0x80 } else { 0 })
                 | (if apu_state.ch3_left { 0x40 } else { 0 })
+                | (if apu_state.ch2_left { 0x20 } else { 0 })
+                | (if apu_state.ch1_left { 0x10 } else { 0 })
+                | (if apu_state.ch4_right { 0x08 } else { 0 })
                 | (if apu_state.ch3_right { 0x04 } else { 0 })
                 | (if apu_state.ch2_right { 0x02 } else { 0 })
                 | (if apu_state.ch1_right { 0x01 } else { 0 })
         }
         NR52_REGISTER => {
             (if apu_state.master_enable { 0x80 } else { 0 })
+                | (if apu_state.is_ch4_enabled() { 0x08 } else { 0 })
                 | (if apu_state.is_ch3_enabled() { 0x04 } else { 0 })
                 | (if apu_state.is_ch2_enabled() { 0x02 } else { 0 })
                 | (if apu_state.is_ch1_enabled() { 0x01 } else { 0 })
                 | 0x70 // Bits 4-6 always read as 1
         }
 
-        WAVE_RAM_START..=WAVE_RAM_END => {
-            apu_state.ch3.read_wave_ram(address)
-        }
+        WAVE_RAM_START..=WAVE_RAM_END => apu_state.ch3.read_wave_ram(address),
 
         _ => 0xFF, // Unused registers
     }
@@ -711,6 +747,19 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             }
         }
 
+        NR41_REGISTER => {
+            apu_state.ch4.set_length_timer(value);
+        }
+        NR42_REGISTER => {
+            apu_state.ch4.set_volume_envelope(value);
+        }
+        NR43_REGISTER => {
+            apu_state.ch4.set_frequency_randomness(value);
+        }
+        NR44_REGISTER => {
+            apu_state.ch4.set_control(value);
+        }
+
         NR50_REGISTER => {
             apu_state.vin_left = (value & 0x80) != 0;
             apu_state.master_volume_left = (value >> 4) & 0x07;
@@ -718,9 +767,11 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.master_volume_right = value & 0x07;
         }
         NR51_REGISTER => {
+            apu_state.ch4_left = (value & 0x80) != 0;
             apu_state.ch3_left = (value & 0x40) != 0;
             apu_state.ch2_left = (value & 0x20) != 0;
             apu_state.ch1_left = (value & 0x10) != 0;
+            apu_state.ch4_right = (value & 0x08) != 0;
             apu_state.ch3_right = (value & 0x04) != 0;
             apu_state.ch2_right = (value & 0x02) != 0;
             apu_state.ch1_right = (value & 0x01) != 0;
@@ -729,9 +780,15 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             let old_enable = apu_state.master_enable;
             apu_state.master_enable = (value & 0x80) != 0;
 
-            if old_enable && !apu_state.master_enable {
-                // APU turned off - reset everything
+            if !apu_state.master_enable {
+                // APU turned off - reset all registers, but keep master_enable state
+                let master_enable = apu_state.master_enable;
                 *apu_state = ApuState::new();
+                apu_state.master_enable = master_enable;
+            } else if !old_enable {
+                // APU turned ON - reset frame sequencer
+                apu_state.frame_sequencer_step = 0;
+                apu_state.frame_sequencer_timer = 8192; // Schedule first tick
             }
         }
 

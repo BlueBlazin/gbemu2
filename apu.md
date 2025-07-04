@@ -328,3 +328,70 @@ Bits 2, 1, 0: Period
 - CH3 has an internal “sample index” counter. The “sample index” increments at the channel’s sample rate, which is 32 times the channel’s frequency Each time it increments, the corresponding “sample” (nibble) is read from wave RAM. (This means that sample #0 is skipped when first starting up CH3.)
 - CH3 does not emit samples directly, but stores every sample read into a buffer, and emits that continuously; (re)triggering the channel does not clear nor refresh this buffer, so the last sample ever read will be emitted again. This buffer is cleared when turning the APU on, so CH3 will emit a “digital 0” when first powered on
 - CH3 output level control does not, in fact, alter the output level. It shifts the digital value CH3 is outputting, not the analog value. This only matters when changing the setting mid-playback: the digital values being shifted bias them towards 0, which biases the analog output towards “1”; the HPF will smooth this over time, but not instantly
+
+### Sound Channel 4 — Noise
+
+- This channel is used to output white noise, which is done by randomly switching the amplitude between two levels fairly fast
+- The frequency can be adjusted in order to make the noise appear “harder” (lower frequency) or “softer” (higher frequency)
+- The random function that switches the output level can also be manipulated. Certain settings can cause the wave to be more regular, sounding closer to a pulse than noise
+
+#### FF20 — NR41: Channel 4 length timer [write-only]
+
+- This register controls the channel’s length timer
+  Bits 5, 4, 3, 2, 1, 0: Initial length timer
+- The higher the length timer, the shorter the time before the channel is cut
+
+#### FF21 — NR42: Channel 4 volume & envelope
+
+- This register controls the digital amplitude of the “high” part of the pulse, and the sweep applied to that setting
+  Bits 7, 6, 5, 4: Initial volume
+  Bit 3: Env dir
+  Bit 2, 1, 0: Sweep pace
+
+- Initial volume: How loud the channel initially is. Note that these bits are readable, but are not updated by the envelope functionality
+- Env dir: The envelope’s direction; 0 = decrease volume over time, 1 = increase volume over time
+- Sweep pace: The envelope ticks at 64 Hz, and the channel’s envelope will be increased / decreased (depending on bit 3) every Sweep pace of those ticks. A setting of 0 disables the envelope
+- Setting bits 3-7 of this register all to 0 (initial volume = 0, envelope = decreasing) turns the DAC off
+
+#### FF22 — NR43: Channel 4 frequency & randomness
+
+- This register allows controlling the way the amplitude is randomly switched
+  Bits 7, 6, 5, 4: Clock shift
+  Bit 3: LFSR width
+  Bits 2, 1, 0: Clock divider
+
+- Clock shift: See frequency formula below
+- LFSR width: 0 = 15-bit, 1 = 7-bit (more regular output; some frequencies sound more like pulse than noise)
+- Clock divider: See the frequency formula below. Note that divider = 0 is treated as divider = 0.5 instead
+- The frequency at which the LFSR is clocked is (262144 / (divider \* 2^shift)) Hz
+- If the bit shifted out is a 0, the channel emits a 0; otherwise, it emits the volume selected in NR42
+
+#### FF23 — NR44: Channel 4 control
+
+Bit 7: Trigger
+Bit 6: Length enable
+
+- Trigger (Write-only): Writing any value to NR44 with this bit set triggers the channel, causing the following to occur:
+  - Ch4 is enabled
+  - If the length timer expired it is reset
+  - Envelope timer is reset
+  - Volume is set to contents of NR42 initial volume
+  - LFSR bits are reset
+- Length enable (Read/Write): Takes effect immediately upon writing to this register
+
+### Noise channel (CH4) Details
+
+- CH4 revolves around a LFSR.
+- The LFSR has 16 bits: 15 bits for its current state and 1 bit to temporarily store the next bit to shift in
+- When CH4 is ticked (at the frequency specified via NR43):
+  - The result of LFSR_0 ⊙ LFSR_1 (1 if bit 0 and bit 1 are identical, 0 otherwise) is written to bit 15.
+  - If “short mode” was selected in NR43, then bit 15 is copied to bit 7 as well.
+  - Finally, the entire LFSR is shifted right, and bit 0 selects between 0 and the chosen volume.
+- The LFSR is set to 0 when (re)triggering the channel
+- If the “active” portion of the LFSR only contains “1” bits, only “1” bits will be generated; this prevents CH4 from ever changing values (until retriggered), essentially silencing it
+
+Noise divisors example from another emulator's source:
+
+```rs
+const DIVISORS: [usize; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
+```

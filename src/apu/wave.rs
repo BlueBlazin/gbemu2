@@ -16,9 +16,9 @@ pub struct WaveChannel {
     pub volume_code: u8, // 0-3 (00=mute, 01=100%, 10=50%, 11=25%)
 
     // Wave RAM and sample playback
-    pub wave_ram: [u8; 16],  // 16 bytes of wave RAM (FF30-FF3F)
-    pub sample_buffer: u8,   // Last read sample (continuously emitted)
-    pub sample_index: u8,    // Current position in 32-sample waveform (0-31)
+    pub wave_ram: [u8; 16], // 16 bytes of wave RAM (FF30-FF3F)
+    pub sample_buffer: u8,  // Last read sample (continuously emitted)
+    pub sample_index: u8,   // Current position in 32-sample waveform (0-31)
 }
 
 impl WaveChannel {
@@ -47,12 +47,12 @@ impl WaveChannel {
         }
 
         // The period divider is set to the contents of NR33 and NR34
-        self.period_timer = (2048 - self.period) * 4; // 4 T-cycles per period step
+        self.period_timer = (2048 - self.period) * 2; // 2 T-cycles per period step
 
         // Wave RAM index is reset, but its not refilled
         // Sample #0 is skipped when first starting up CH3
         self.sample_index = 0;
-        
+
         // Don't read sample yet - sample #0 will be skipped on first increment
         // The buffer retains whatever was last read
     }
@@ -67,13 +67,16 @@ impl WaveChannel {
         }
 
         if self.period_timer == 0 {
-            self.period_timer = (2048 - self.period) * 4; // Reset to full period (4 T-cycles)
+            self.period_timer = (2048 - self.period) * 2; // Reset to full period (2 T-cycles)
 
             // Advance sample index - this increments at the channel's sample rate
             self.sample_index = (self.sample_index + 1) % 32;
-            
+
             // Read the new sample from wave RAM and store in buffer
-            self.sample_buffer = self.read_sample();
+            if self.enabled {
+                // Only read if enabled to prevent RAM corruption issues
+                self.sample_buffer = self.read_sample();
+            }
         }
     }
 
@@ -93,10 +96,10 @@ impl WaveChannel {
 
         // Apply volume control by shifting the digital value
         let digital_value = match self.volume_code {
-            0 => 0,                         // Mute (No sound)
-            1 => self.sample_buffer,        // 100% volume (use samples as-is)
-            2 => self.sample_buffer >> 1,   // 50% volume (shift right once)
-            3 => self.sample_buffer >> 2,   // 25% volume (shift right twice)
+            0 => 0,                       // Mute (No sound)
+            1 => self.sample_buffer,      // 100% volume (use samples as-is)
+            2 => self.sample_buffer >> 1, // 50% volume (shift right once)
+            3 => self.sample_buffer >> 2, // 25% volume (shift right twice)
             _ => 0,
         };
 
@@ -114,6 +117,15 @@ impl WaveChannel {
     }
 
     pub fn read_wave_ram(&self, address: u16) -> u8 {
+        // Reading wave RAM is only safe when the channel is disabled
+        if self.enabled {
+            let byte_index = (self.sample_index / 2) as usize;
+            if (address - 0xFF30) as usize == byte_index {
+                return self.wave_ram[byte_index];
+            }
+            return 0xFF; // Reading from other wave RAM locations while active is undefined
+        }
+
         let index = (address - 0xFF30) as usize;
         if index < 16 {
             self.wave_ram[index]
@@ -123,6 +135,10 @@ impl WaveChannel {
     }
 
     pub fn write_wave_ram(&mut self, address: u16, value: u8) {
+        // Writing to wave RAM is only safe when the channel is disabled
+        if self.enabled {
+            return;
+        }
         let index = (address - 0xFF30) as usize;
         if index < 16 {
             self.wave_ram[index] = value;
@@ -134,19 +150,15 @@ impl WaveChannel {
         let byte_index = (self.sample_index / 2) as usize;
         let nibble_index = self.sample_index % 2;
 
-        if byte_index < 16 {
-            if nibble_index == 0 {
-                // Upper nibble (first sample in byte)
-                (self.wave_ram[byte_index] >> 4) & 0x0F
-            } else {
-                // Lower nibble (second sample in byte)
-                self.wave_ram[byte_index] & 0x0F
-            }
+        let byte = self.wave_ram[byte_index];
+        if nibble_index == 0 {
+            // Upper nibble (first sample in byte)
+            (byte >> 4) & 0x0F
         } else {
-            0
+            // Lower nibble (second sample in byte)
+            byte & 0x0F
         }
     }
-
 
     // Helper method to set volume code from register value
     pub fn set_volume_code(&mut self, nr32_value: u8) {
