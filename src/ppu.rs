@@ -303,8 +303,12 @@ impl PpuState {
     }
 
     // Window visibility check
+    // pub fn is_window_visible(&self) -> bool {
+    //     self.window_enable() && self.bg_window_enable() && self.wx <= 166 && self.wy <= 143
+    // }
     pub fn is_window_visible(&self) -> bool {
-        self.window_enable() && self.bg_window_enable() && self.wx <= 166 && self.wy <= 143
+        // Window visibility (LCDC.5) is independent of background visibility (LCDC.0) on DMG.
+        self.window_enable() && self.wx <= 166 && self.wy <= 143
     }
 
     // Check if window should be rendered on current scanline
@@ -797,12 +801,10 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
         if can_render_pixel(render_state) {
             render_pixel(render_state).await;
             render_state.pixel_x += 1;
-            dots_spent += 1;
-        } else {
-            // If we can't render, still consume a dot
-            sleep_dots(1).await;
-            dots_spent += 1;
         }
+
+        sleep_dots(1).await;
+        dots_spent += 1;
     }
 
     // Ensure minimum mode 3 time and cap maximum
@@ -999,12 +1001,16 @@ async fn handle_objects_at_pixel(render_state: &mut PpuRenderState) -> u16 {
     let mut object_to_fetch: Option<(usize, ObjectData)> = None;
 
     for (idx, obj) in render_state.objects_on_line.iter().enumerate() {
-        let obj_x = obj.x as i16 - 8;
+        let obj_x = obj.x as i16 - 8; // left-most pixel on screen
+        let cur_x = render_state.pixel_x as i16;
 
-        // Check if we've reached this object's X position and haven't fetched it yet
-        if obj_x == render_state.pixel_x as i16
-            && !render_state.fetched_objects.contains(&(idx as u8))
-        {
+        // Is the current LCD X position inside this 8-pixel-wide sprite?
+        let sprite_active_now = (obj_x..obj_x + 8).contains(&cur_x);
+
+        // Have we already fetched it this scan-line?
+        let not_fetched_yet = !render_state.fetched_objects.contains(&(idx as u8));
+
+        if sprite_active_now && not_fetched_yet {
             object_to_fetch = Some((idx, obj.clone()));
             break;
         }
@@ -1101,6 +1107,11 @@ async fn fetch_object_pixels(
         render_state.obj_fifo_valid = true;
     }
 
+    // Ensure object FIFO has at least 8 pixels before mixing
+    while render_state.obj_fifo.pixels.len() < 8 {
+        render_state.obj_fifo.push(PixelData::new());
+    }
+
     // Mix object pixels into object FIFO (including transparent pixels to reserve priority)
     let obj_x = obj.x as i16 - 8;
     for i in 0..8 {
@@ -1129,16 +1140,12 @@ async fn fetch_object_pixels(
         // Now it’s safe to mutate that slot
         let curr = &mut render_state.obj_fifo.pixels[fifo_index];
 
-        //Since we fetch objects in priority order (X then OAM), the first object to claim a pixel slot wins.
-        if curr.object_priority == 255 {
-            // claim the slot
-            curr.object_priority = obj.oam_index;
+        if color != 0 && curr.object_priority == 255 {
+            // first **non-transparent** sprite to reach this pixel wins
+            curr.color = color;
+            curr.palette = (obj.attributes & 0x10) != 0;
             curr.bg_priority = (obj.attributes & 0x80) != 0;
-            // only overwrite the visible color if non-transparent
-            if color != 0 {
-                curr.color = color;
-                curr.palette = (obj.attributes & 0x10) != 0;
-            }
+            curr.object_priority = obj.oam_index;
         }
     }
 
@@ -1151,15 +1158,18 @@ fn can_render_pixel(render_state: &PpuRenderState) -> bool {
 }
 
 async fn render_pixel(render_state: &mut PpuRenderState) {
-    // 1) SCX discard: drop background pixels, leave obj_fifo untouched
+    // 1) SCX discard: Drop pixels if we are still aligning due to SCX.
     if render_state.scx_discard_count > 0 {
         render_state.scx_discard_count -= 1;
-        // simply consume one bg pixel and return
         let _ = render_state.bg_fifo.pop();
+        // The object FIFO also needs to be advanced to maintain alignment
+        if render_state.obj_fifo_valid {
+            let _ = render_state.obj_fifo.pop();
+        }
         return;
     }
 
-    // 2) Now pop exactly one pixel from each FIFO
+    // 2) Pop one pixel from each FIFO to get their raw properties.
     let bg_pixel = render_state.bg_fifo.pop().unwrap_or(PixelData::bg_pixel(0));
     let obj_pixel = if render_state.obj_fifo_valid {
         render_state.obj_fifo.pop().unwrap_or(PixelData::new())
@@ -1167,39 +1177,66 @@ async fn render_pixel(render_state: &mut PpuRenderState) {
         PixelData::new()
     };
 
-    // 3) Composite as before
-    let final_color = with_state_mut(|state| {
-        let bg_enable = state.ppu.bg_window_enable();
-        let obj_enable = state.ppu.obj_enable();
+    // 3) Composite the pixels with the correct, multi-stage priority logic.
+    with_state_mut(|state| {
+        let obj_is_visible = obj_pixel.color != 0;
 
-        // start with background
-        let mut col = if bg_enable {
-            state.ppu.get_bg_color(bg_pixel.color)
+        // --- Priority Decision --- who is in front of whom?
+        let bg_is_opaque = if render_state.window_triggered {
+            // Window pixel: only opaque if the window itself is enabled
+            state.ppu.window_enable() && bg_pixel.color != 0
         } else {
-            0
+            // Background pixel: only opaque if the BG layer is enabled
+            state.ppu.bg_window_enable() && bg_pixel.color != 0
         };
 
-        // then sprite on top?
-        if obj_enable && obj_pixel.color != 0 {
-            let bg_zero = bg_pixel.color == 0;
-            let sprite_has_priority = !obj_pixel.bg_priority || bg_zero;
-            if sprite_has_priority {
-                col = state.ppu.get_obj_color(obj_pixel.palette, obj_pixel.color);
+        let draw_object = obj_is_visible && (!obj_pixel.bg_priority || !bg_is_opaque);
+
+        // --- Final Color Calculation ---
+        // Now, apply master enable flags to the winning pixel to get the final color.
+        let final_pixel_color;
+        if draw_object {
+            // Object won the priority battle. Draw it if the OBJ layer is enabled.
+            if state.ppu.obj_enable() {
+                final_pixel_color = state.ppu.get_obj_color(obj_pixel.palette, obj_pixel.color);
+            } else {
+                // OBJ layer is disabled, so nothing is drawn from it. We fall back to the BG pixel.
+                // We must re-evaluate the BG pixel's visibility.
+                let bg_color_idx = if state.ppu.bg_window_enable() {
+                    bg_pixel.color
+                } else {
+                    0
+                };
+                final_pixel_color = state.ppu.get_bg_color(bg_color_idx);
             }
+        } else {
+            // Background/Window won. Draw it if the BG/Window layer is enabled.
+            let mut bg_color_idx = 0; // Default to transparent
+            if state.ppu.bg_window_enable() {
+                // Master BG/Win enable is on.
+                if render_state.window_triggered {
+                    // It's a window pixel, so check the window-specific enable flag.
+                    if state.ppu.window_enable() {
+                        bg_color_idx = bg_pixel.color;
+                    }
+                } else {
+                    // It's a background pixel, master enable is sufficient.
+                    bg_color_idx = bg_pixel.color;
+                }
+            }
+            final_pixel_color = state.ppu.get_bg_color(bg_color_idx);
         }
 
-        // write it
-        state
-            .ppu
-            .set_pixel(render_state.pixel_x as usize, state.ppu.ly as usize, col);
-        col
+        // Write the final computed pixel to the framebuffer.
+        state.ppu.set_pixel(
+            render_state.pixel_x as usize,
+            state.ppu.ly as usize,
+            final_pixel_color,
+        );
     });
 
-    // 4) If we emptied the object FIFO, invalidate it so we know when to refill
+    // 4) If we emptied the object FIFO, invalidate it for the next fetch.
     if render_state.obj_fifo_valid && render_state.obj_fifo.is_empty() {
         render_state.obj_fifo_valid = false;
     }
-
-    // 5) Spend one dot on the actual render
-    sleep_dots(1).await;
 }
