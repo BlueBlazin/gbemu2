@@ -210,13 +210,6 @@ async fn step_timer() {
         // Update DIV register - increments at 16384 Hz (every 256 M-cycles)
         // DIV is the upper 8 bits of the 16-bit system counter
         state.timer.div = (state.timer.system_counter >> 8) as u8;
-
-        // Validate DIV frequency: 16384 Hz = 4194304 Hz / 256 M-cycles
-        debug_assert_eq!(
-            256,          // DIV increments every 256 M-cycles (upper 8 bits of 16-bit counter)
-            256,          // Expected frequency for 16384 Hz
-            "DIV frequency calculation mismatch"
-        );
     });
 
     // Check for timer tick (selected bit transition from 1 to 0)
