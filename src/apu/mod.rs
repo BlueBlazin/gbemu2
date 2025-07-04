@@ -372,8 +372,7 @@ pub struct ApuState {
     pub sample_count: u32,
     pub audio_filter: AudioFilter,
 
-    pub hp_filter1: HpFilter,
-    pub hp_filter2: HpFilter,
+    pub hp_filter: HpFilter,
 }
 
 impl ApuState {
@@ -402,8 +401,7 @@ impl ApuState {
             sample_accumulator: 0.0,
             sample_count: 0,
             audio_filter: AudioFilter::new(),
-            hp_filter1: HpFilter::new(),
-            hp_filter2: HpFilter::new(),
+            hp_filter: HpFilter::new(),
         }
     }
 
@@ -541,9 +539,8 @@ impl ApuState {
             // 2.a low-pass anti-alias (simple leaky integrator)
             sample = self.audio_filter.smooth_sample(sample);
 
-            // 2.b *two* independent first-order high-pass filters (DMG hardware)
-            sample = self.hp_filter1.step(sample);
-            sample = self.hp_filter2.step(sample);
+            // 2.b high-pass filters (DMG hardware)
+            sample = self.hp_filter.step(sample);
 
             // 2.c hard-clamp – keeps SDL happy
             sample = sample.clamp(-1.0, 1.0);
@@ -728,9 +725,12 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.ch1.sweep_pace = (value >> 4) & 0x07;
             apu_state.ch1.sweep_direction = (value & 0x08) != 0;
             apu_state.ch1.sweep_step = value & 0x07;
-            
+
             // Clearing the sweep direction bit after subtraction calculation disables the channel
-            if old_direction && !apu_state.ch1.sweep_direction && apu_state.ch1.sweep_calculation_made {
+            if old_direction
+                && !apu_state.ch1.sweep_direction
+                && apu_state.ch1.sweep_calculation_made
+            {
                 apu_state.ch1.enabled = false;
             }
         }
@@ -754,7 +754,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.ch1.period = (apu_state.ch1.period & 0x00FF) | (((value & 0x07) as u16) << 8);
 
             // Extra length clocking
-            if !apu_state.is_length_clock_step() && !old_length_enabled && apu_state.ch1.length_enabled {
+            if !apu_state.is_length_clock_step()
+                && !old_length_enabled
+                && apu_state.ch1.length_enabled
+            {
                 if apu_state.ch1.length_timer > 0 && !trigger {
                     apu_state.ch1.length_timer -= 1;
                     if apu_state.ch1.length_timer == 0 {
@@ -765,12 +768,12 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
 
             if trigger {
                 // Check for length = 63 instead of 64
-                let should_adjust_length = !apu_state.is_length_clock_step() && 
-                                         apu_state.ch1.length_enabled && 
-                                         apu_state.ch1.length_timer == 0;
-                
+                let should_adjust_length = !apu_state.is_length_clock_step()
+                    && apu_state.ch1.length_enabled
+                    && apu_state.ch1.length_timer == 0;
+
                 apu_state.ch1.trigger(true); // CH1 has sweep
-                
+
                 if should_adjust_length && apu_state.ch1.length_timer == 64 {
                     apu_state.ch1.length_timer = 63;
                 }
@@ -802,7 +805,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.ch2.period = (apu_state.ch2.period & 0x00FF) | (((value & 0x07) as u16) << 8);
 
             // Extra length clocking
-            if !apu_state.is_length_clock_step() && !old_length_enabled && apu_state.ch2.length_enabled {
+            if !apu_state.is_length_clock_step()
+                && !old_length_enabled
+                && apu_state.ch2.length_enabled
+            {
                 if apu_state.ch2.length_timer > 0 && !trigger {
                     apu_state.ch2.length_timer -= 1;
                     if apu_state.ch2.length_timer == 0 {
@@ -813,12 +819,12 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
 
             if trigger {
                 // Check for length = 63 instead of 64
-                let should_adjust_length = !apu_state.is_length_clock_step() && 
-                                         apu_state.ch2.length_enabled && 
-                                         apu_state.ch2.length_timer == 0;
-                
+                let should_adjust_length = !apu_state.is_length_clock_step()
+                    && apu_state.ch2.length_enabled
+                    && apu_state.ch2.length_timer == 0;
+
                 apu_state.ch2.trigger(false); // CH2 has no sweep
-                
+
                 if should_adjust_length && apu_state.ch2.length_timer == 64 {
                     apu_state.ch2.length_timer = 63;
                 }
@@ -849,7 +855,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.ch3.set_period_high(value);
 
             // Extra length clocking
-            if !apu_state.is_length_clock_step() && !old_length_enabled && apu_state.ch3.length_enabled {
+            if !apu_state.is_length_clock_step()
+                && !old_length_enabled
+                && apu_state.ch3.length_enabled
+            {
                 if apu_state.ch3.length_timer > 0 && !trigger {
                     apu_state.ch3.length_timer -= 1;
                     if apu_state.ch3.length_timer == 0 {
@@ -860,12 +869,12 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
 
             if trigger {
                 // Check for length = 255 instead of 256 (wave channel max)
-                let should_adjust_length = !apu_state.is_length_clock_step() && 
-                                         apu_state.ch3.length_enabled && 
-                                         apu_state.ch3.length_timer == 0;
-                
+                let should_adjust_length = !apu_state.is_length_clock_step()
+                    && apu_state.ch3.length_enabled
+                    && apu_state.ch3.length_timer == 0;
+
                 apu_state.ch3.trigger();
-                
+
                 if should_adjust_length && apu_state.ch3.length_timer == 256 {
                     apu_state.ch3.length_timer = 255;
                 }
@@ -884,7 +893,7 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
         NR44_REGISTER => {
             let old_length_enabled = apu_state.ch4.length_enabled;
             let trigger = (value & 0x80) != 0;
-            
+
             // Extra length clocking - do this before set_control
             if !apu_state.is_length_clock_step() && !old_length_enabled && (value & 0x40) != 0 {
                 if apu_state.ch4.length_timer > 0 && !trigger {
@@ -896,16 +905,17 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             }
 
             // Check for length = 63 instead of 64
-            let should_adjust_length = trigger && !apu_state.is_length_clock_step() && 
-                                     (value & 0x40) != 0 && 
-                                     apu_state.ch4.length_timer == 0;
+            let should_adjust_length = trigger
+                && !apu_state.is_length_clock_step()
+                && (value & 0x40) != 0
+                && apu_state.ch4.length_timer == 0;
 
             // Check for envelope timer +1
-            let should_adjust_envelope = trigger && apu_state.is_envelope_clock_step() && 
-                                        apu_state.ch4.envelope_pace != 0;
+            let should_adjust_envelope =
+                trigger && apu_state.is_envelope_clock_step() && apu_state.ch4.envelope_pace != 0;
 
             apu_state.ch4.set_control(value);
-            
+
             if should_adjust_length && apu_state.ch4.length_timer == 64 {
                 apu_state.ch4.length_timer = 63;
             }

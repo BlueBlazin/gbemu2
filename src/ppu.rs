@@ -1101,48 +1101,43 @@ async fn fetch_object_pixels(
         render_state.obj_fifo_valid = true;
     }
 
-    // Mix object pixels into object FIFO
+    // Mix object pixels into object FIFO (including transparent pixels to reserve priority)
     let obj_x = obj.x as i16 - 8;
-
-    // Calculate which pixels of the sprite should be mixed into the FIFO
     for i in 0..8 {
         let screen_x = obj_x + i as i16;
-
-        // Skip pixels that are off-screen or before current pixel position
         if screen_x < 0 || screen_x >= 160 {
             continue;
         }
 
-        // Calculate FIFO position for this pixel
+        // Map screen_x -> FIFO slot
         let fifo_pos = screen_x - render_state.pixel_x as i16;
-        if fifo_pos < 0 || fifo_pos >= 8 {
+        if fifo_pos < 0 {
+            continue;
+        }
+        let fifo_index = fifo_pos as usize;
+
+        // **NEW BOUND CHECK** — make sure we haven’t popped
+        // so many that pixels.len() < fifo_index+1
+        if fifo_index >= render_state.obj_fifo.pixels.len() {
             continue;
         }
 
-        let pixel_bit = if (obj.attributes & 0x20) != 0 {
-            // X flip
-            i
-        } else {
-            7 - i
-        };
-
+        // Pick the tile‐bit (handle X-flip)
+        let pixel_bit = if obj.attributes & 0x20 != 0 { i } else { 7 - i };
         let color = ((tile_data_high >> pixel_bit) & 1) << 1 | ((tile_data_low >> pixel_bit) & 1);
 
-        if color != 0 {
-            // Only non-transparent pixels
-            let fifo_index = fifo_pos as usize;
-            if fifo_index < render_state.obj_fifo.pixels.len() {
-                let current_pixel = &render_state.obj_fifo.pixels[fifo_index];
+        // Now it’s safe to mutate that slot
+        let curr = &mut render_state.obj_fifo.pixels[fifo_index];
 
-                // Replace if current pixel is transparent or has lower priority (lower OAM index = higher priority)
-                if current_pixel.color == 0 || obj.oam_index < current_pixel.object_priority {
-                    render_state.obj_fifo.pixels[fifo_index] = PixelData::obj_pixel(
-                        color,
-                        (obj.attributes & 0x10) != 0, // Palette
-                        (obj.attributes & 0x80) != 0, // BG priority
-                        obj.oam_index,
-                    );
-                }
+        //Since we fetch objects in priority order (X then OAM), the first object to claim a pixel slot wins.
+        if curr.object_priority == 255 {
+            // claim the slot
+            curr.object_priority = obj.oam_index;
+            curr.bg_priority = (obj.attributes & 0x80) != 0;
+            // only overwrite the visible color if non-transparent
+            if color != 0 {
+                curr.color = color;
+                curr.palette = (obj.attributes & 0x10) != 0;
             }
         }
     }
@@ -1156,69 +1151,55 @@ fn can_render_pixel(render_state: &PpuRenderState) -> bool {
 }
 
 async fn render_pixel(render_state: &mut PpuRenderState) {
-    // Pop pixel from background FIFO
-    let bg_pixel = render_state.bg_fifo.pop().unwrap_or(PixelData::bg_pixel(0));
+    // 1) SCX discard: drop background pixels, leave obj_fifo untouched
+    if render_state.scx_discard_count > 0 {
+        render_state.scx_discard_count -= 1;
+        // simply consume one bg pixel and return
+        let _ = render_state.bg_fifo.pop();
+        return;
+    }
 
-    // Get object pixel from FIFO (only pop if we have valid object data)
-    let obj_pixel = if render_state.obj_fifo_valid && !render_state.obj_fifo.is_empty() {
+    // 2) Now pop exactly one pixel from each FIFO
+    let bg_pixel = render_state.bg_fifo.pop().unwrap_or(PixelData::bg_pixel(0));
+    let obj_pixel = if render_state.obj_fifo_valid {
         render_state.obj_fifo.pop().unwrap_or(PixelData::new())
     } else {
         PixelData::new()
     };
 
-    // Handle SCX discard
-    if render_state.scx_discard_count > 0 {
-        render_state.scx_discard_count -= 1;
+    // 3) Composite as before
+    let final_color = with_state_mut(|state| {
+        let bg_enable = state.ppu.bg_window_enable();
+        let obj_enable = state.ppu.obj_enable();
 
-        // If object FIFO is valid, we need to keep it synchronized
-        if render_state.obj_fifo_valid && render_state.obj_fifo.is_empty() {
-            // Refill object FIFO with transparent pixels to maintain alignment
-            for _ in 0..8 {
-                render_state.obj_fifo.push(PixelData::new());
-            }
-        }
+        // start with background
+        let mut col = if bg_enable {
+            state.ppu.get_bg_color(bg_pixel.color)
+        } else {
+            0
+        };
 
-        return; // Don't render this pixel
-    }
-
-    let _final_color = with_state_mut(|state| {
-        // Determine final pixel color
-        let (_lcdc, bg_enable, obj_enable) = (
-            state.ppu.lcdc,
-            state.ppu.bg_window_enable(),
-            state.ppu.obj_enable(),
-        );
-
-        let mut final_color = 0;
-
-        if bg_enable {
-            final_color = state.ppu.get_bg_color(bg_pixel.color);
-        }
-
-        // Object priority logic
+        // then sprite on top?
         if obj_enable && obj_pixel.color != 0 {
-            let bg_color_zero = bg_pixel.color == 0;
-            let obj_has_priority = !obj_pixel.bg_priority || bg_color_zero;
-
-            if obj_has_priority {
-                final_color = state.ppu.get_obj_color(obj_pixel.palette, obj_pixel.color);
+            let bg_zero = bg_pixel.color == 0;
+            let sprite_has_priority = !obj_pixel.bg_priority || bg_zero;
+            if sprite_has_priority {
+                col = state.ppu.get_obj_color(obj_pixel.palette, obj_pixel.color);
             }
         }
 
-        // Set pixel in framebuffer
-        state.ppu.set_pixel(
-            render_state.pixel_x as usize,
-            state.ppu.ly as usize,
-            final_color,
-        );
-
-        final_color
+        // write it
+        state
+            .ppu
+            .set_pixel(render_state.pixel_x as usize, state.ppu.ly as usize, col);
+        col
     });
 
-    // If object FIFO is empty and was valid, invalidate it
+    // 4) If we emptied the object FIFO, invalidate it so we know when to refill
     if render_state.obj_fifo_valid && render_state.obj_fifo.is_empty() {
         render_state.obj_fifo_valid = false;
     }
 
+    // 5) Spend one dot on the actual render
     sleep_dots(1).await;
 }
