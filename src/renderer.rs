@@ -28,6 +28,7 @@ const COLORS: [(u8, u8, u8); 4] = [
     (46, 97, 90),   // Color 3 (darkest)
 ];
 
+
 // Audio callback for SDL
 pub struct AudioOutputCallback {
     buffer: Arc<Mutex<VecDeque<f32>>>,
@@ -38,9 +39,25 @@ impl AudioCallback for AudioOutputCallback {
 
     fn callback(&mut self, out: &mut [f32]) {
         let mut buffer = self.buffer.lock().unwrap();
+        
+        // Check if we have enough samples to fill the request
+        let available_samples = buffer.len();
+        let requested_samples = out.len();
 
-        for sample in out.iter_mut() {
-            *sample = buffer.pop_front().unwrap_or(0.0);
+        if available_samples < requested_samples {
+            // Buffer underrun - fill with silence and available samples
+            for (i, sample) in out.iter_mut().enumerate() {
+                if i < available_samples {
+                    *sample = buffer.pop_front().unwrap_or(0.0);
+                } else {
+                    *sample = 0.0; // Fill remaining with silence
+                }
+            }
+        } else {
+            // Normal case - we have enough samples
+            for sample in out.iter_mut() {
+                *sample = buffer.pop_front().unwrap_or(0.0);
+            }
         }
     }
 }
@@ -79,14 +96,17 @@ impl AudioSystem {
 
     pub fn queue_samples(&self, samples: &[f32]) {
         let mut buffer = self.buffer.lock().unwrap();
+        
+        // Add new samples to the buffer
         for &sample in samples {
             buffer.push_back(sample);
         }
+    }
 
-        // Prevent buffer from growing too large
-        while buffer.len() > 8192 {
-            buffer.pop_front();
-        }
+    /// Get current buffer size
+    pub fn get_buffer_size(&self) -> usize {
+        let buffer = self.buffer.lock().unwrap();
+        buffer.len()
     }
 }
 

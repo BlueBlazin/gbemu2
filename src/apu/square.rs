@@ -1,10 +1,5 @@
-// Square wave duty cycles (8 steps each)
-const DUTY_TABLE: [[bool; 8]; 4] = [
-    [false, false, false, false, false, false, false, true], // 12.5%
-    [true, false, false, false, false, false, false, true],  // 25%
-    [true, false, false, false, false, true, true, true],    // 50%
-    [false, true, true, true, true, true, true, false],      // 75%
-];
+// Import precomputed sample tables from parent module
+use super::SQUARE_WAVE_TABLES;
 
 #[derive(Debug, Clone)]
 pub struct SquareChannel {
@@ -184,17 +179,13 @@ impl SquareChannel {
         }
     }
 
-    pub fn output(&self) -> u8 {
+    pub fn output(&self) -> f32 {
         if !self.enabled || !self.dac_enabled {
-            return 0;
+            return 0.0;
         }
 
-        let duty_pattern = DUTY_TABLE[self.duty as usize];
-        if duty_pattern[self.duty_step as usize] {
-            self.volume
-        } else {
-            0
-        }
+        // Use precomputed sample tables for direct float output
+        SQUARE_WAVE_TABLES[self.duty as usize][self.volume as usize][self.duty_step as usize]
     }
 
     pub fn update_dac(&mut self, nr2_value: u8) {

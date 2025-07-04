@@ -245,3 +245,86 @@ The "output" from the channel is either 0 or the current "volume" depending on w
 Some channels have up to 3 other components. You don't need to implement these completely for a "basic" output, but you want to do them eventually. To summarize, sweep can periodically adjust the "frequency" of a channel, Envelope periodically adjusts the volume, the length counter shuts off a channel after a period of time. All 3 are clocked by another component in the APU called the frame sequencer. This sequencer is clocked about every 8192 CPU cycles (it runs at 512hz, CPU runs at 4194304hz, 4194304/512=8192). There's 8-steps to the frame sequencer, so every 8192 cpu cycles is 1 step. Every other step, the length counter is clocked in each channel, on the 7th step, the envelope is clocked, and on the 2nd and 6th step, the sweep generator is clocked.
 
 In order to actually hear the output, you need to convert the output to something that our sound output library actually likes, usually raw PCM samples. They're pretty simple in structure, just a line of "volume levels" like the APU outputs. They can be encoded in different ways, like using floats or integers. I prefer to use float samples since that's what I sort of used for the NES. To convert a channel's output to a float, all I do is take the output and divide by 100. The other problem is that the APU can output samples much more frequently than our computers like them, you can think of them outputting a sample once per CPU cycle, but the CPU runs at 4194304hz, and our computers like samples at much lower rates like 44100 or 48000hz. So much like how you have to resize a large image to fit a small screen, we have to resize a large set of samples for a smaller buffer. There's many techniques you can utilize to downsample, but the easiest to implement is nearest-neighbor. Essentially, only gather samples every CPU-Rate/Sampling-Rate, for example, if you want to use 48000hz, 4194304/48000 = 87 (rounded), so gather samples every 87 CPU cycles.
+
+## Square Channel Example Duty Table
+
+```rs
+const DUTY_TABLE: [[bool; 8]; 4] = [
+    [false, false, false, false, false, false, false, true],
+    [true, false, false, false, false, false, false, true],
+    [true, false, false, false, false, true, true, true],
+    [false, true, true, true, true, true, true, false],
+];
+```
+
+## Sound Channel 3 — Wave output
+
+- While other channels only offer limited control over the waveform they generate, this channel allows outputting any wave
+- While the “length” of the wave is fixed at 32 “samples”, 4-bit each, the speed at which it is read can be customized
+- It’s possible to “shorten” the wave by either feeding it a repeating pattern, or doubling each sample and doubling the read rate
+- It’s also possible to artificially “increase” the wave’s length by loading a new wave as soon as the whole buffer has been read
+
+### FF1A — NR30: Channel 3 DAC enable
+
+- This register controls CH3’s DAC. Like other channels, turning the DAC off immediately turns the channel off as well
+  Bit 7: DAC on/off
+
+### FF1B — NR31: Channel 3 length timer [write-only]
+
+- This register controls the channel’s length timer
+  Bits 7, 6, 5, 4, 3, 2, 1: Initial length timer
+  The higher the length timer, the shorter the time before the channel is cut
+
+### FF1C — NR32: Channel 3 output level
+
+- This channel lacks the envelope functionality that the other three channels have, and has a much coarser volume control
+  Bits 6, 5: Output level
+
+Output level: Controls the channel’s volume as follows:
+
+| Bits 6-5 (binary) | Output level                                              |
+| ----------------- | --------------------------------------------------------- |
+| 00                | Mute (No sound)                                           |
+| 01                | 100% volume (use samples read from Wave RAM as-is)        |
+| 10                | 50% volume (shift samples read from Wave RAM right once)  |
+| 11                | 25% volume (shift samples read from Wave RAM right twice) |
+
+### FF1D — NR33: Channel 3 period low [write-only]
+
+- This register stores the low 8 bits of the channel’s 11-bit “period value”
+- The upper 3 bits are stored in the low 3 bits of NR34
+- The wave channel’s period divider is clocked at 2097152 Hz, once per two dots, and its waveform is 32 samples long
+- Period value $500 means -$300, or 1 sample per 768 input cycles
+  - or (2097152 ÷ 768) = 2730.7 Hz sample rate
+  - or (2097152 ÷ 768 ÷ 32) = 85.333 Hz tone frequency
+- Period value $740 means -$C0, or 1 sample per 192 input cycles
+  - or (2097152 ÷ 192) = 10923 Hz sample rate
+  - or (2097152 ÷ 192 ÷ 32) = 341.33 Hz tone frequency
+- Period changes (written to NR33 or NR34) only take effect after the following time wave RAM is read
+
+### FF1E — NR34: Channel 3 period high & control
+
+Bit 7: Trigger
+Bit 6: Length enable
+Bits 2, 1, 0: Period
+
+- Trigger (Write-only): Writing any value to NR34 with this bit set triggers the channel, causing the following to occur:
+  - Ch3 is enabled.
+  - If the length timer expired it is reset.
+  - The period divider is set to the contents of NR33 and NR34.
+  - Volume is set to contents of NR32 initial volume.
+  - Wave RAM index is reset, but its not refilled.
+- Length enable (Read/Write): Takes effect immediately upon writing to this register
+- Period (Write-only): The upper 3 bits of the period value; the lower 8 bits are stored in NR33
+
+### FF30–FF3F — Wave pattern RAM
+
+- Wave RAM is 16 bytes long; each byte holds two “samples”, each 4 bits
+- As CH3 plays, it reads wave RAM left to right, upper nibble first. That is, $FF30’s upper nibble, $FF30’s lower nibble, $FF31’s upper nibble, and so on
+- Wave RAM can be accessed normally even if the DAC is on, as long as the channel is not active
+
+## Wave channel (CH3) Details
+
+- CH3 has an internal “sample index” counter. The “sample index” increments at the channel’s sample rate, which is 32 times the channel’s frequency Each time it increments, the corresponding “sample” (nibble) is read from wave RAM. (This means that sample #0 is skipped when first starting up CH3.)
+- CH3 does not emit samples directly, but stores every sample read into a buffer, and emits that continuously; (re)triggering the channel does not clear nor refresh this buffer, so the last sample ever read will be emitted again. This buffer is cleared when turning the APU on, so CH3 will emit a “digital 0” when first powered on
+- CH3 output level control does not, in fact, alter the output level. It shifts the digital value CH3 is outputting, not the analog value. This only matters when changing the setting mid-playback: the digital values being shifted bias them towards 0, which biases the analog output towards “1”; the HPF will smooth this over time, but not instantly

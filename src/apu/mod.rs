@@ -2,8 +2,232 @@ use crate::driver::sleep;
 use crate::emulator::{with_state, with_state_mut};
 
 pub mod square;
+pub mod wave;
 
 pub use square::SquareChannel;
+pub use wave::WaveChannel;
+
+// Precomputed square wave sample tables for Game Boy audio
+// Each table contains 8 steps per duty cycle × 16 volume levels
+// Values are normalized floats from -1.0 to 1.0
+
+// Duty cycle 0: 12.5%
+const SQUARE_WAVE_DUTY_0: [[f32; 8]; 16] = [
+    [
+        0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+    ],
+    [
+        -0.066667, -0.066667, -0.066667, -0.066667, -0.066667, -0.066667, -0.066667, 0.066667,
+    ],
+    [
+        -0.133333, -0.133333, -0.133333, -0.133333, -0.133333, -0.133333, -0.133333, 0.133333,
+    ],
+    [
+        -0.200000, -0.200000, -0.200000, -0.200000, -0.200000, -0.200000, -0.200000, 0.200000,
+    ],
+    [
+        -0.266667, -0.266667, -0.266667, -0.266667, -0.266667, -0.266667, -0.266667, 0.266667,
+    ],
+    [
+        -0.333333, -0.333333, -0.333333, -0.333333, -0.333333, -0.333333, -0.333333, 0.333333,
+    ],
+    [
+        -0.400000, -0.400000, -0.400000, -0.400000, -0.400000, -0.400000, -0.400000, 0.400000,
+    ],
+    [
+        -0.466667, -0.466667, -0.466667, -0.466667, -0.466667, -0.466667, -0.466667, 0.466667,
+    ],
+    [
+        -0.533333, -0.533333, -0.533333, -0.533333, -0.533333, -0.533333, -0.533333, 0.533333,
+    ],
+    [
+        -0.600000, -0.600000, -0.600000, -0.600000, -0.600000, -0.600000, -0.600000, 0.600000,
+    ],
+    [
+        -0.666667, -0.666667, -0.666667, -0.666667, -0.666667, -0.666667, -0.666667, 0.666667,
+    ],
+    [
+        -0.733333, -0.733333, -0.733333, -0.733333, -0.733333, -0.733333, -0.733333, 0.733333,
+    ],
+    [
+        -0.800000, -0.800000, -0.800000, -0.800000, -0.800000, -0.800000, -0.800000, 0.800000,
+    ],
+    [
+        -0.866667, -0.866667, -0.866667, -0.866667, -0.866667, -0.866667, -0.866667, 0.866667,
+    ],
+    [
+        -0.933333, -0.933333, -0.933333, -0.933333, -0.933333, -0.933333, -0.933333, 0.933333,
+    ],
+    [
+        -1.000000, -1.000000, -1.000000, -1.000000, -1.000000, -1.000000, -1.000000, 1.000000,
+    ],
+];
+
+// Duty cycle 1: 25%
+const SQUARE_WAVE_DUTY_1: [[f32; 8]; 16] = [
+    [
+        0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+    ],
+    [
+        0.066667, -0.066667, -0.066667, -0.066667, -0.066667, -0.066667, -0.066667, 0.066667,
+    ],
+    [
+        0.133333, -0.133333, -0.133333, -0.133333, -0.133333, -0.133333, -0.133333, 0.133333,
+    ],
+    [
+        0.200000, -0.200000, -0.200000, -0.200000, -0.200000, -0.200000, -0.200000, 0.200000,
+    ],
+    [
+        0.266667, -0.266667, -0.266667, -0.266667, -0.266667, -0.266667, -0.266667, 0.266667,
+    ],
+    [
+        0.333333, -0.333333, -0.333333, -0.333333, -0.333333, -0.333333, -0.333333, 0.333333,
+    ],
+    [
+        0.400000, -0.400000, -0.400000, -0.400000, -0.400000, -0.400000, -0.400000, 0.400000,
+    ],
+    [
+        0.466667, -0.466667, -0.466667, -0.466667, -0.466667, -0.466667, -0.466667, 0.466667,
+    ],
+    [
+        0.533333, -0.533333, -0.533333, -0.533333, -0.533333, -0.533333, -0.533333, 0.533333,
+    ],
+    [
+        0.600000, -0.600000, -0.600000, -0.600000, -0.600000, -0.600000, -0.600000, 0.600000,
+    ],
+    [
+        0.666667, -0.666667, -0.666667, -0.666667, -0.666667, -0.666667, -0.666667, 0.666667,
+    ],
+    [
+        0.733333, -0.733333, -0.733333, -0.733333, -0.733333, -0.733333, -0.733333, 0.733333,
+    ],
+    [
+        0.800000, -0.800000, -0.800000, -0.800000, -0.800000, -0.800000, -0.800000, 0.800000,
+    ],
+    [
+        0.866667, -0.866667, -0.866667, -0.866667, -0.866667, -0.866667, -0.866667, 0.866667,
+    ],
+    [
+        0.933333, -0.933333, -0.933333, -0.933333, -0.933333, -0.933333, -0.933333, 0.933333,
+    ],
+    [
+        1.000000, -1.000000, -1.000000, -1.000000, -1.000000, -1.000000, -1.000000, 1.000000,
+    ],
+];
+
+// Duty cycle 2: 50%
+const SQUARE_WAVE_DUTY_2: [[f32; 8]; 16] = [
+    [
+        0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+    ],
+    [
+        0.066667, -0.066667, -0.066667, -0.066667, -0.066667, 0.066667, 0.066667, 0.066667,
+    ],
+    [
+        0.133333, -0.133333, -0.133333, -0.133333, -0.133333, 0.133333, 0.133333, 0.133333,
+    ],
+    [
+        0.200000, -0.200000, -0.200000, -0.200000, -0.200000, 0.200000, 0.200000, 0.200000,
+    ],
+    [
+        0.266667, -0.266667, -0.266667, -0.266667, -0.266667, 0.266667, 0.266667, 0.266667,
+    ],
+    [
+        0.333333, -0.333333, -0.333333, -0.333333, -0.333333, 0.333333, 0.333333, 0.333333,
+    ],
+    [
+        0.400000, -0.400000, -0.400000, -0.400000, -0.400000, 0.400000, 0.400000, 0.400000,
+    ],
+    [
+        0.466667, -0.466667, -0.466667, -0.466667, -0.466667, 0.466667, 0.466667, 0.466667,
+    ],
+    [
+        0.533333, -0.533333, -0.533333, -0.533333, -0.533333, 0.533333, 0.533333, 0.533333,
+    ],
+    [
+        0.600000, -0.600000, -0.600000, -0.600000, -0.600000, 0.600000, 0.600000, 0.600000,
+    ],
+    [
+        0.666667, -0.666667, -0.666667, -0.666667, -0.666667, 0.666667, 0.666667, 0.666667,
+    ],
+    [
+        0.733333, -0.733333, -0.733333, -0.733333, -0.733333, 0.733333, 0.733333, 0.733333,
+    ],
+    [
+        0.800000, -0.800000, -0.800000, -0.800000, -0.800000, 0.800000, 0.800000, 0.800000,
+    ],
+    [
+        0.866667, -0.866667, -0.866667, -0.866667, -0.866667, 0.866667, 0.866667, 0.866667,
+    ],
+    [
+        0.933333, -0.933333, -0.933333, -0.933333, -0.933333, 0.933333, 0.933333, 0.933333,
+    ],
+    [
+        1.000000, -1.000000, -1.000000, -1.000000, -1.000000, 1.000000, 1.000000, 1.000000,
+    ],
+];
+
+// Duty cycle 3: 75%
+const SQUARE_WAVE_DUTY_3: [[f32; 8]; 16] = [
+    [
+        0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
+    ],
+    [
+        -0.066667, 0.066667, 0.066667, 0.066667, 0.066667, 0.066667, 0.066667, -0.066667,
+    ],
+    [
+        -0.133333, 0.133333, 0.133333, 0.133333, 0.133333, 0.133333, 0.133333, -0.133333,
+    ],
+    [
+        -0.200000, 0.200000, 0.200000, 0.200000, 0.200000, 0.200000, 0.200000, -0.200000,
+    ],
+    [
+        -0.266667, 0.266667, 0.266667, 0.266667, 0.266667, 0.266667, 0.266667, -0.266667,
+    ],
+    [
+        -0.333333, 0.333333, 0.333333, 0.333333, 0.333333, 0.333333, 0.333333, -0.333333,
+    ],
+    [
+        -0.400000, 0.400000, 0.400000, 0.400000, 0.400000, 0.400000, 0.400000, -0.400000,
+    ],
+    [
+        -0.466667, 0.466667, 0.466667, 0.466667, 0.466667, 0.466667, 0.466667, -0.466667,
+    ],
+    [
+        -0.533333, 0.533333, 0.533333, 0.533333, 0.533333, 0.533333, 0.533333, -0.533333,
+    ],
+    [
+        -0.600000, 0.600000, 0.600000, 0.600000, 0.600000, 0.600000, 0.600000, -0.600000,
+    ],
+    [
+        -0.666667, 0.666667, 0.666667, 0.666667, 0.666667, 0.666667, 0.666667, -0.666667,
+    ],
+    [
+        -0.733333, 0.733333, 0.733333, 0.733333, 0.733333, 0.733333, 0.733333, -0.733333,
+    ],
+    [
+        -0.800000, 0.800000, 0.800000, 0.800000, 0.800000, 0.800000, 0.800000, -0.800000,
+    ],
+    [
+        -0.866667, 0.866667, 0.866667, 0.866667, 0.866667, 0.866667, 0.866667, -0.866667,
+    ],
+    [
+        -0.933333, 0.933333, 0.933333, 0.933333, 0.933333, 0.933333, 0.933333, -0.933333,
+    ],
+    [
+        -1.000000, 1.000000, 1.000000, 1.000000, 1.000000, 1.000000, 1.000000, -1.000000,
+    ],
+];
+
+// Combined lookup table for all duty cycles
+const SQUARE_WAVE_TABLES: [[[f32; 8]; 16]; 4] = [
+    SQUARE_WAVE_DUTY_0,
+    SQUARE_WAVE_DUTY_1,
+    SQUARE_WAVE_DUTY_2,
+    SQUARE_WAVE_DUTY_3,
+];
+
+// Usage: let sample = SQUARE_WAVE_TABLES[duty_cycle][volume][step];
 
 // APU register addresses
 pub const NR10_REGISTER: u16 = 0xFF10; // CH1 Sweep
@@ -17,6 +241,16 @@ pub const NR22_REGISTER: u16 = 0xFF17; // CH2 Volume/Envelope
 pub const NR23_REGISTER: u16 = 0xFF18; // CH2 Period Low
 pub const NR24_REGISTER: u16 = 0xFF19; // CH2 Period High/Control
 
+pub const NR30_REGISTER: u16 = 0xFF1A; // CH3 DAC Enable
+pub const NR31_REGISTER: u16 = 0xFF1B; // CH3 Length
+pub const NR32_REGISTER: u16 = 0xFF1C; // CH3 Volume
+pub const NR33_REGISTER: u16 = 0xFF1D; // CH3 Period Low
+pub const NR34_REGISTER: u16 = 0xFF1E; // CH3 Period High/Control
+
+// Wave RAM registers (FF30-FF3F)
+pub const WAVE_RAM_START: u16 = 0xFF30;
+pub const WAVE_RAM_END: u16 = 0xFF3F;
+
 pub const NR50_REGISTER: u16 = 0xFF24; // Master Volume/VIN
 pub const NR51_REGISTER: u16 = 0xFF25; // Sound Panning
 pub const NR52_REGISTER: u16 = 0xFF26; // Master Control
@@ -25,7 +259,38 @@ pub const NR52_REGISTER: u16 = 0xFF26; // Master Control
 const SAMPLE_RATE: u32 = 48000; // Output sample rate
 const CPU_FREQUENCY: u32 = 4194304; // Game Boy CPU frequency
 const CYCLES_PER_SAMPLE: u32 = CPU_FREQUENCY / SAMPLE_RATE; // ~87 cycles per sample
-const BUFFER_SIZE: usize = 2048; // Audio buffer size in samples
+
+// Audio buffer constants
+const BUFFER_SIZE: usize = 1024; // Target buffer size in samples
+
+// Audio filtering constants
+const SMOOTHING_FACTOR: f32 = 0.95; // Low-pass filter coefficient (0.0 = no smoothing, 1.0 = no change)
+
+// Simple audio filter for anti-aliasing and smoothing
+#[derive(Debug, Clone)]
+pub struct AudioFilter {
+    last_sample: f32,
+    smoothing_factor: f32,
+}
+
+impl AudioFilter {
+    fn new() -> Self {
+        Self {
+            last_sample: 0.0,
+            smoothing_factor: SMOOTHING_FACTOR,
+        }
+    }
+
+    fn smooth_sample(&mut self, new_sample: f32) -> f32 {
+        self.last_sample =
+            self.last_sample * self.smoothing_factor + new_sample * (1.0 - self.smoothing_factor);
+        self.last_sample
+    }
+
+    fn reset(&mut self) {
+        self.last_sample = 0.0;
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ApuState {
@@ -41,19 +306,23 @@ pub struct ApuState {
     pub ch1_right: bool,
     pub ch2_left: bool,
     pub ch2_right: bool,
+    pub ch3_left: bool,
+    pub ch3_right: bool,
 
     // Channels
     pub ch1: SquareChannel,
     pub ch2: SquareChannel,
+    pub ch3: WaveChannel,
 
     // Frame sequencer
     pub frame_sequencer_step: u8,   // 0-7
     pub frame_sequencer_timer: u32, // Timer for frame sequencer
 
-    // Audio buffer
+    // Audio buffer and filtering
     pub audio_buffer: Vec<f32>,
     pub sample_accumulator: f32,
     pub sample_count: u32,
+    pub audio_filter: AudioFilter,
 }
 
 impl ApuState {
@@ -68,13 +337,17 @@ impl ApuState {
             ch1_right: false,
             ch2_left: false,
             ch2_right: false,
+            ch3_left: false,
+            ch3_right: false,
             ch1: SquareChannel::new(),
             ch2: SquareChannel::new(),
+            ch3: WaveChannel::new(),
             frame_sequencer_step: 0,
             frame_sequencer_timer: 0,
             audio_buffer: Vec::with_capacity(BUFFER_SIZE),
             sample_accumulator: 0.0,
             sample_count: 0,
+            audio_filter: AudioFilter::new(),
         }
     }
 
@@ -86,12 +359,17 @@ impl ApuState {
         self.ch2.enabled
     }
 
+    pub fn is_ch3_enabled(&self) -> bool {
+        self.ch3.enabled
+    }
+
     pub fn frame_sequencer_clock(&mut self) {
         match self.frame_sequencer_step {
             0 => {
                 // Length counters
                 self.ch1.clock_length();
                 self.ch2.clock_length();
+                self.ch3.clock_length();
             }
             1 => {
                 // Nothing
@@ -100,6 +378,7 @@ impl ApuState {
                 // Length counters and CH1 sweep
                 self.ch1.clock_length();
                 self.ch2.clock_length();
+                self.ch3.clock_length();
                 self.ch1.clock_sweep();
             }
             3 => {
@@ -109,6 +388,7 @@ impl ApuState {
                 // Length counters
                 self.ch1.clock_length();
                 self.ch2.clock_length();
+                self.ch3.clock_length();
             }
             5 => {
                 // Nothing
@@ -117,6 +397,7 @@ impl ApuState {
                 // Length counters and CH1 sweep
                 self.ch1.clock_length();
                 self.ch2.clock_length();
+                self.ch3.clock_length();
                 self.ch1.clock_sweep();
             }
             7 => {
@@ -135,11 +416,12 @@ impl ApuState {
             return;
         }
 
-        // Get channel outputs
-        let ch1_out = self.ch1.output() as f32;
-        let ch2_out = self.ch2.output() as f32;
+        // Get channel outputs (already normalized float values)
+        let ch1_out = self.ch1.output();
+        let ch2_out = self.ch2.output();
+        let ch3_out = self.ch3.output();
 
-        // Mix channels (simple addition for now)
+        // Mix channels with proper panning
         let mut left_mix = 0.0;
         let mut right_mix = 0.0;
 
@@ -155,13 +437,20 @@ impl ApuState {
         if self.ch2_right {
             right_mix += ch2_out;
         }
+        if self.ch3_left {
+            left_mix += ch3_out;
+        }
+        if self.ch3_right {
+            right_mix += ch3_out;
+        }
 
-        // Apply master volume
+        // Apply master volume (Game Boy master volume is 0-7)
         left_mix *= (self.master_volume_left as f32 + 1.0) / 8.0;
         right_mix *= (self.master_volume_right as f32 + 1.0) / 8.0;
 
-        // Convert to final sample (-1.0 to 1.0 range)
-        let final_sample = (left_mix + right_mix) / 2.0 / 15.0; // 15 is max channel volume
+        // Mix stereo to mono and apply filter
+        let raw_sample = (left_mix + right_mix) * 0.5;
+        let final_sample = self.audio_filter.smooth_sample(raw_sample);
 
         self.sample_accumulator += final_sample;
         self.sample_count += 1;
@@ -192,10 +481,10 @@ pub async fn apu() {
     let mut div_apu_counter = 0u32;
 
     loop {
-        sleep(1).await; // 1 T-cycle
+        sleep(4).await; // 1 M-cycle (4 T-cycles)
 
-        // Check if frame sequencer needs to run
-        div_apu_counter += 1;
+        // Check if frame sequencer needs to run (DIV-APU runs at 512 Hz)
+        div_apu_counter += 4; // We advanced 4 T-cycles
         let needs_frame_sequencer = if div_apu_counter >= 8192 {
             div_apu_counter = 0;
             true
@@ -210,12 +499,15 @@ pub async fn apu() {
                 return false;
             }
 
-            // Clock period timers every T-cycle for square channels (they run at 1 MHz)
-            state.apu.ch1.clock_period();
-            state.apu.ch2.clock_period();
+            // Clock period timers 4 times to maintain accuracy (batch processing)
+            for _ in 0..4 {
+                state.apu.ch1.clock_period();
+                state.apu.ch2.clock_period();
+                state.apu.ch3.clock_period();
 
-            // Mix audio sample every T-cycle
-            state.apu.mix_sample();
+                // Mix audio sample for each T-cycle
+                state.apu.mix_sample();
+            }
 
             // Check for buffer full event
             state.apu.is_buffer_full()
@@ -294,6 +586,22 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
             }) | 0xBF // Most bits read as 1
         }
 
+        NR30_REGISTER => {
+            (if apu_state.ch3.dac_enabled { 0x80 } else { 0 }) | 0x7F // Most bits read as 1
+        }
+        NR31_REGISTER => 0xFF, // Write-only
+        NR32_REGISTER => {
+            (apu_state.ch3.volume_code << 5) | 0x9F // Most bits read as 1
+        }
+        NR33_REGISTER => 0xFF, // Write-only
+        NR34_REGISTER => {
+            (if apu_state.ch3.length_enabled {
+                0x40
+            } else {
+                0
+            }) | 0xBF // Most bits read as 1
+        }
+
         NR50_REGISTER => {
             (if apu_state.vin_left { 0x80 } else { 0 })
                 | (apu_state.master_volume_left << 4)
@@ -303,14 +611,21 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
         NR51_REGISTER => {
             (if apu_state.ch2_left { 0x20 } else { 0 })
                 | (if apu_state.ch1_left { 0x10 } else { 0 })
+                | (if apu_state.ch3_left { 0x40 } else { 0 })
+                | (if apu_state.ch3_right { 0x04 } else { 0 })
                 | (if apu_state.ch2_right { 0x02 } else { 0 })
                 | (if apu_state.ch1_right { 0x01 } else { 0 })
         }
         NR52_REGISTER => {
             (if apu_state.master_enable { 0x80 } else { 0 })
+                | (if apu_state.is_ch3_enabled() { 0x04 } else { 0 })
                 | (if apu_state.is_ch2_enabled() { 0x02 } else { 0 })
                 | (if apu_state.is_ch1_enabled() { 0x01 } else { 0 })
                 | 0x70 // Bits 4-6 always read as 1
+        }
+
+        WAVE_RAM_START..=WAVE_RAM_END => {
+            apu_state.ch3.read_wave_ram(address)
         }
 
         _ => 0xFF, // Unused registers
@@ -374,6 +689,28 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             }
         }
 
+        NR30_REGISTER => {
+            apu_state.ch3.update_dac(value);
+        }
+        NR31_REGISTER => {
+            apu_state.ch3.set_length_timer(value);
+        }
+        NR32_REGISTER => {
+            apu_state.ch3.set_volume_code(value);
+        }
+        NR33_REGISTER => {
+            apu_state.ch3.set_period_low(value);
+        }
+        NR34_REGISTER => {
+            let trigger = (value & 0x80) != 0;
+            apu_state.ch3.set_length_enabled(value);
+            apu_state.ch3.set_period_high(value);
+
+            if trigger {
+                apu_state.ch3.trigger();
+            }
+        }
+
         NR50_REGISTER => {
             apu_state.vin_left = (value & 0x80) != 0;
             apu_state.master_volume_left = (value >> 4) & 0x07;
@@ -381,8 +718,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.master_volume_right = value & 0x07;
         }
         NR51_REGISTER => {
+            apu_state.ch3_left = (value & 0x40) != 0;
             apu_state.ch2_left = (value & 0x20) != 0;
             apu_state.ch1_left = (value & 0x10) != 0;
+            apu_state.ch3_right = (value & 0x04) != 0;
             apu_state.ch2_right = (value & 0x02) != 0;
             apu_state.ch1_right = (value & 0x01) != 0;
         }
@@ -394,6 +733,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
                 // APU turned off - reset everything
                 *apu_state = ApuState::new();
             }
+        }
+
+        WAVE_RAM_START..=WAVE_RAM_END => {
+            apu_state.ch3.write_wave_ram(address, value);
         }
 
         _ => {} // Unused registers
