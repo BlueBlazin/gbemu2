@@ -761,9 +761,9 @@ async fn oam_scan(render_state: &mut PpuRenderState) {
 async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
     render_state.reset_for_scanline();
 
-    // The fetcher's x is now correctly reset to 0 by reset_for_scanline.
-    // We only need to set the discard count based on SCX.
+    // Set the fetcher to start at the correct tile
     let scx = with_state(|state| state.ppu.scx);
+    render_state.fetcher.x = (scx / 8) & 0x1F;
     render_state.scx_discard_count = scx % 8;
 
     let mut dots_spent = 0;
@@ -791,13 +791,6 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
         // Handle objects at current pixel position
         let obj_penalty = handle_objects_at_pixel(render_state).await;
         dots_spent += obj_penalty;
-
-        // If we have a valid object FIFO but it's empty, we need to refill it
-        if render_state.obj_fifo_valid && render_state.obj_fifo.is_empty() {
-            for _ in 0..8 {
-                render_state.obj_fifo.push(PixelData::new());
-            }
-        }
 
         // Render pixel if FIFOs have data
         if can_render_pixel(render_state) {
