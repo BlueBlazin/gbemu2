@@ -1,5 +1,6 @@
 use crate::dma::DmaState;
 use crate::interrupts::InterruptState;
+use crate::joypad::JoypadState;
 use crate::mmu::MMU;
 use crate::ppu::PpuState;
 use crate::timer::TimerState;
@@ -235,6 +236,7 @@ pub struct EmulatorState {
     pub interrupts: InterruptState,
     pub timer: TimerState,
     pub dma: DmaState,
+    pub joypad: JoypadState,
     pub debug_mode: bool,
     pub opcode_log: Vec<(u16, u8)>, // (PC, opcode)
     pub render_dirty_flags: RenderDirtyFlags,
@@ -255,6 +257,7 @@ impl EmulatorState {
             interrupts: InterruptState::new(),
             timer: TimerState::new(),
             dma: DmaState::new(),
+            joypad: JoypadState::new(),
             debug_mode: false,
             opcode_log: Vec::new(),
             render_dirty_flags: RenderDirtyFlags::new(),
@@ -297,6 +300,7 @@ impl EmulatorState {
     // Internal I/O register handling
     fn read_io_register(&self, address: u16) -> u8 {
         match address {
+            crate::io::P1_REGISTER => self.mmu.io_registers[0x00], // P1 (FF00)
             crate::io::IF_REGISTER => self.interrupts.if_reg,
             crate::io::IE_REGISTER => self.interrupts.ie,
             crate::timer::DIV_REGISTER
@@ -324,6 +328,10 @@ impl EmulatorState {
 
     fn write_io_register(&mut self, address: u16, value: u8) {
         match address {
+            crate::io::P1_REGISTER => {
+                // Only bits 4-5 are writable for P1 register
+                self.mmu.io_registers[0x00] = (value & 0xF0) | (self.mmu.io_registers[0x00] & 0x0F);
+            }
             crate::io::IF_REGISTER => self.interrupts.if_reg = value,
             crate::io::IE_REGISTER => self.interrupts.ie = value,
             crate::timer::DIV_REGISTER

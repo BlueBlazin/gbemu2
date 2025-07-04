@@ -5,6 +5,7 @@ pub mod driver;
 pub mod emulator;
 mod interrupts;
 mod io;
+pub mod joypad;
 mod mmu;
 mod ppu;
 mod state;

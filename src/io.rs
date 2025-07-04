@@ -2,6 +2,7 @@ use crate::emulator::{with_state, with_state_mut};
 use crate::timer;
 
 // I/O register addresses
+pub const P1_REGISTER: u16 = 0xFF00; // Joypad
 pub const IF_REGISTER: u16 = 0xFF0F; // Interrupt Flag
 pub const IE_REGISTER: u16 = 0xFFFF; // Interrupt Enable
 pub const DMA_REGISTER: u16 = 0xFF46; // OAM DMA Transfer
@@ -9,6 +10,10 @@ pub const DMA_REGISTER: u16 = 0xFF46; // OAM DMA Transfer
 // Read from I/O register
 pub fn read_io_register(address: u16) -> u8 {
     match address {
+        P1_REGISTER => {
+            // Read joypad register from MMU I/O registers
+            with_state(|state| state.mmu.io_registers[0x00])
+        }
         IF_REGISTER => {
             // Read Interrupt Flag register from interrupt state
             with_state(|state| state.interrupts.if_reg)
@@ -36,6 +41,14 @@ pub fn read_io_register(address: u16) -> u8 {
 // Write to I/O register
 pub fn write_io_register(address: u16, value: u8) {
     match address {
+        P1_REGISTER => {
+            // Write joypad register - only bits 4-5 are writable (selection bits)
+            with_state_mut(|state| {
+                let current = state.mmu.io_registers[0x00];
+                // Keep lower nibble (button states) and update upper nibble selection
+                state.mmu.io_registers[0x00] = (value & 0xF0) | (current & 0x0F);
+            });
+        }
         IF_REGISTER => {
             // Write Interrupt Flag register to interrupt state
             with_state_mut(|state| state.interrupts.if_reg = value);

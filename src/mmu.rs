@@ -155,7 +155,14 @@ impl MMU {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8, dma_active: bool, ppu: &mut PpuState, dirty_flags: &mut RenderDirtyFlags) {
+    pub fn write(
+        &mut self,
+        address: u16,
+        value: u8,
+        dma_active: bool,
+        ppu: &mut PpuState,
+        dirty_flags: &mut RenderDirtyFlags,
+    ) {
         if dma_active {
             // During DMA, CPU can only access HRAM (0xFF80-0xFFFE)
             match address {
@@ -171,7 +178,13 @@ impl MMU {
         }
     }
 
-    pub fn write_unrestricted(&mut self, address: u16, value: u8, ppu: &mut PpuState, dirty_flags: &mut RenderDirtyFlags) {
+    pub fn write_unrestricted(
+        &mut self,
+        address: u16,
+        value: u8,
+        ppu: &mut PpuState,
+        dirty_flags: &mut RenderDirtyFlags,
+    ) {
         match address {
             // ROM and External RAM (0x0000-0x7FFF, 0xA000-0xBFFF) - handled by cartridge
             0x0000..=0x7FFF | 0xA000..=0xBFFF => {

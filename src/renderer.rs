@@ -1,4 +1,5 @@
 use crate::emulator::with_state;
+use crate::joypad::{update_joypad_button, JoypadButton};
 use crate::texture_pool::{TextureId, TextureKey, TexturePool, TexturePoolConfig};
 use sdl2::event::Event as SdlEvent;
 use sdl2::keyboard::Keycode;
@@ -48,9 +49,40 @@ impl SdlSystem {
             match event {
                 SdlEvent::Quit { .. } => return false,
                 SdlEvent::KeyDown {
-                    keycode: Some(Keycode::Escape),
+                    keycode: Some(keycode),
                     ..
-                } => return false,
+                } => {
+                    match keycode {
+                        Keycode::Escape => return false,
+                        // Joypad button mappings
+                        Keycode::A => update_joypad_button(JoypadButton::A, true),
+                        Keycode::S => update_joypad_button(JoypadButton::B, true),
+                        Keycode::Up => update_joypad_button(JoypadButton::Up, true),
+                        Keycode::Down => update_joypad_button(JoypadButton::Down, true),
+                        Keycode::Left => update_joypad_button(JoypadButton::Left, true),
+                        Keycode::Right => update_joypad_button(JoypadButton::Right, true),
+                        Keycode::Return => update_joypad_button(JoypadButton::Start, true),
+                        Keycode::Space => update_joypad_button(JoypadButton::Select, true),
+                        _ => {}
+                    }
+                }
+                SdlEvent::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => {
+                    match keycode {
+                        // Joypad button mappings
+                        Keycode::A => update_joypad_button(JoypadButton::A, false),
+                        Keycode::S => update_joypad_button(JoypadButton::B, false),
+                        Keycode::Up => update_joypad_button(JoypadButton::Up, false),
+                        Keycode::Down => update_joypad_button(JoypadButton::Down, false),
+                        Keycode::Left => update_joypad_button(JoypadButton::Left, false),
+                        Keycode::Right => update_joypad_button(JoypadButton::Right, false),
+                        Keycode::Return => update_joypad_button(JoypadButton::Start, false),
+                        Keycode::Space => update_joypad_button(JoypadButton::Select, false),
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }
