@@ -184,9 +184,7 @@ impl ApuState {
     }
 
     pub fn drain_buffer(&mut self) -> Vec<f32> {
-        let buffer = self.audio_buffer.clone();
-        self.audio_buffer.clear();
-        buffer
+        std::mem::replace(&mut self.audio_buffer, Vec::with_capacity(BUFFER_SIZE))
     }
 }
 
