@@ -537,10 +537,10 @@ impl ApuState {
             let mut sample = self.sample_accumulator / self.sample_count as f32;
 
             // 2.a low-pass anti-alias (simple leaky integrator)
-            sample = self.audio_filter.smooth_sample(sample);
+            // sample = self.audio_filter.smooth_sample(sample);
 
             // 2.b high-pass filters (DMG hardware)
-            sample = self.hp_filter.step(sample);
+            // sample = self.hp_filter.step(sample);
 
             // 2.c hard-clamp – keeps SDL happy
             sample = sample.clamp(-1.0, 1.0);
