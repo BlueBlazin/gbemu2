@@ -958,7 +958,7 @@ fn find_sprite_to_fetch(render_state: &PpuRenderState) -> Option<usize> {
 
         let already_fetched = render_state.fetched_objects.contains(&obj.oam_index);
 
-        !already_fetched && trigger_x == internal_x
+        !already_fetched && trigger_x <= internal_x
     })
 }
 
