@@ -802,8 +802,18 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
             // First, perform the fetch logic, which is instantaneous in our model.
             fetch_and_mix_sprite(render_state, obj_index);
 
-            // Then, advance time for the stall period.
-            let stall_dots = 6;
+            // 2b. How long must we stall?
+            let sprite_x = render_state.objects_on_line[obj_index].x;
+
+            let stall_dots = if sprite_x == 0 {
+                // 11-dot base + (SCX & 7) if SCX’s low bits are non-zero
+                let scx_lsb = with_state(|s| s.ppu.scx & 7);
+                11 + scx_lsb as u16
+            } else {
+                6
+            };
+
+            // 2c. Advance time…
             sleep_dots(stall_dots).await;
             dots_spent += stall_dots;
 
@@ -945,8 +955,8 @@ fn find_sprite_to_fetch(render_state: &PpuRenderState) -> Option<usize> {
     let internal_x = render_state.internal_x;
 
     render_state.objects_on_line.iter().position(|obj| {
-        // Sprites with x==0 or x>=168 never appear on screen
-        if obj.x == 0 || obj.x >= 168 {
+        // Sprites with x>=168 never appear on screen
+        if obj.x >= 168 {
             return false;
         }
 
@@ -955,7 +965,6 @@ fn find_sprite_to_fetch(render_state: &PpuRenderState) -> Option<usize> {
         // the trigger point is effectively clamped to 0. `saturating_sub`
         // correctly models this behavior.
         let trigger_x = obj.x.saturating_sub(8);
-
         let already_fetched = render_state.fetched_objects.contains(&obj.oam_index);
 
         !already_fetched && trigger_x <= internal_x
