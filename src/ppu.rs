@@ -950,8 +950,11 @@ fn find_sprite_to_fetch(render_state: &PpuRenderState) -> Option<usize> {
             return false;
         }
 
-        // Hardware uses *wrapping* subtraction here – no saturation!
-        let trigger_x = obj.x.wrapping_sub(8);
+        // The trigger X coordinate is the sprite's screen position (obj.x - 8).
+        // For sprites starting at or before screen position 0 (obj.x <= 8),
+        // the trigger point is effectively clamped to 0. `saturating_sub`
+        // correctly models this behavior.
+        let trigger_x = obj.x.saturating_sub(8);
 
         let already_fetched = render_state.fetched_objects.contains(&obj.oam_index);
 
