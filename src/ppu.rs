@@ -316,12 +316,9 @@ impl PpuState {
     }
 
     // Window visibility check
-    // pub fn is_window_visible(&self) -> bool {
-    //     self.window_enable() && self.bg_window_enable() && self.wx <= 166 && self.wy <= 143
-    // }
     pub fn is_window_visible(&self) -> bool {
-        // Window visibility (LCDC.5) is independent of background visibility (LCDC.0) on DMG.
-        self.window_enable() && self.wx <= 166 && self.wy <= 143
+        // On real DMG hardware the window is gated by the master BG/WIN enable bit (LCDC.0)
+        self.bg_window_enable() && self.window_enable() && self.wx <= 166 && self.wy <= 143
     }
 
     // Check if window should be rendered on current scanline
@@ -852,7 +849,9 @@ async fn trigger_window(render_state: &mut PpuRenderState) {
     render_state.fetcher.is_window = true;
     render_state.fetcher.x = 0;
 
-    // When window triggers, we also need to reset object FIFO state
+    render_state.scx_discard_count = 0;
+
+    // Also keep the object FIFO in step
     render_state.obj_fifo.clear();
     render_state.obj_fifo_valid = false;
 
@@ -986,8 +985,8 @@ async fn get_tile_data_high(render_state: &mut PpuRenderState) {
 }
 
 fn try_push_pixels(render_state: &mut PpuRenderState) -> bool {
-    // Only push if background FIFO is empty
-    if !render_state.bg_fifo.is_empty() {
+    // GB pushes as soon as there are 8 or fewer pixels buffered
+    if render_state.bg_fifo.len() > 8 {
         return false;
     }
 
