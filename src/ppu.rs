@@ -797,12 +797,35 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
         // 1. Check for window activation at the current PPU internal coordinate.
         check_for_window_trigger(render_state);
 
-        // 2. Try to output a pixel. This happens every dot.
+        // 2. Check for a sprite to fetch. This can stall the BG fetcher.
+        if let Some(obj_index) = find_sprite_to_fetch(render_state) {
+            // *** SPRITE FETCH STALL ***
+            // A sprite is ready. The PPU spends ~6 dots fetching its data.
+            // During this time, the background fetcher is paused.
+
+            // First, perform the fetch logic, which is instantaneous in our model.
+            fetch_and_mix_sprite(render_state, obj_index);
+
+            // Then, advance time for the stall period.
+            let stall_dots = 6;
+            sleep_dots(stall_dots).await;
+            dots_spent += stall_dots;
+
+            // We only need to advance internal_x, since render_pixel and tick_fetcher
+            // are skipped during the stall.
+            render_state.internal_x += stall_dots as u8;
+
+            // Continue to the next dot. This `continue` is important because
+            // we don't want to run the BG fetcher or pixel output on this same dot.
+            continue;
+        }
+
+        // 3. Try to output a pixel to the screen.
         if !render_state.bg_fifo.is_empty() {
             render_pixel(render_state);
         }
 
-        // 3. The fetcher is clocked every *other* dot.
+        // 4. The fetcher is clocked every *other* dot.
         if dots_spent % 2 == 0 {
             tick_fetcher(render_state);
         }
@@ -811,10 +834,6 @@ async fn draw_scanline(render_state: &mut PpuRenderState) -> u16 {
         sleep_dots(1).await;
         dots_spent += 1;
         render_state.internal_x += 1;
-
-        // NOTE: Sprite fetching logic would be integrated here. A sprite
-        // fetch would stall the background fetcher by preventing `tick_fetcher`
-        // from being called for a number of dots.
     }
 
     // Return the total time spent in Mode 3.
@@ -1008,6 +1027,121 @@ async fn handle_objects_at_pixel(render_state: &mut PpuRenderState) -> u16 {
     penalty
 }
 
+/// Checks if a sprite is visible at the current PPU internal X coordinate.
+/// The PPU can only fetch one sprite at a time.
+/// Returns the index of the object in `objects_on_line`.
+fn find_sprite_to_fetch(render_state: &PpuRenderState) -> Option<usize> {
+    if !with_state(|s| s.ppu.obj_enable()) {
+        return None;
+    }
+
+    let internal_x = render_state.internal_x;
+
+    // Find the first sprite that matches the current internal PPU coordinate
+    // and hasn't been fetched yet for this scanline.
+    render_state.objects_on_line.iter().position(|obj| {
+        // Check if the sprite is at the current coordinate.
+        // A sprite at x=8 is triggered when internal_x=0.
+        // A sprite at x=0 is a special case and is handled differently by hardware.
+        // We'll use a simple check for now: obj.x is the screen position + 8.
+        let trigger_x = obj.x.saturating_sub(8);
+
+        // Has this sprite been fetched already?
+        let already_fetched = render_state.fetched_objects.contains(&obj.oam_index);
+
+        !already_fetched && trigger_x == internal_x
+    })
+}
+
+/// Fetches the pixel data for a single sprite and mixes it into the object FIFO.
+/// This process takes a variable number of dots on real hardware, but we'll model
+/// it as a 6-dot stall for simplicity, which is a very close approximation.
+fn fetch_and_mix_sprite(render_state: &mut PpuRenderState, obj_index_on_line: usize) {
+    let obj = &render_state.objects_on_line[obj_index_on_line];
+    render_state.fetched_objects.push(obj.oam_index);
+
+    let (tile_data_low, tile_data_high) = with_state(|state| {
+        let oam_entry = &state.ppu.oam[obj.oam_index as usize];
+        let obj_size_16 = state.ppu.obj_size();
+        let ly = state.ppu.ly;
+
+        let sprite_height = if obj_size_16 { 16 } else { 8 };
+
+        // Calculate which line of the sprite we're on
+        let sprite_line = ly.wrapping_sub(oam_entry.y.wrapping_sub(16));
+
+        let tile_line = if oam_entry.y_flip() {
+            sprite_height - 1 - sprite_line
+        } else {
+            sprite_line
+        };
+
+        // For 8x16 sprites, the tile index is determined by the line
+        let tile_index = if obj_size_16 {
+            if tile_line < 8 {
+                oam_entry.tile_index & 0xFE // Use top tile
+            } else {
+                oam_entry.tile_index | 0x01 // Use bottom tile
+            }
+        } else {
+            oam_entry.tile_index
+        };
+
+        // Fetch the two bytes of pixel data for that line
+        let tile_addr = state.ppu.get_object_tile_address(tile_index);
+        let tile_vram_index = ((tile_addr - 0x8000) / 16) as usize;
+        let byte_offset = ((tile_line % 8) * 2) as usize;
+
+        (
+            state.ppu.vram[tile_vram_index][byte_offset],
+            state.ppu.vram[tile_vram_index][byte_offset + 1],
+        )
+    });
+
+    // If this is the first sprite we're fetching for this line, prepare the OBJ FIFO.
+    // It must be padded with transparent pixels to align with the BG FIFO.
+    if !render_state.obj_fifo_valid {
+        render_state.obj_fifo.clear();
+        for _ in 0..render_state.bg_fifo.len() {
+            render_state.obj_fifo.push(PixelData::new());
+        }
+        render_state.obj_fifo_valid = true;
+    }
+
+    // Mix the fetched sprite pixels into the object FIFO.
+    // We only overwrite a pixel if the new sprite has higher priority (lower OAM index)
+    // or if the pixel is currently transparent.
+    let oam_entry = with_state(|s| s.ppu.oam[obj.oam_index as usize].clone());
+    for i in 0..8 {
+        let pixel_bit = if oam_entry.x_flip() { i } else { 7 - i };
+        let color_index =
+            ((tile_data_high >> pixel_bit) & 1) << 1 | ((tile_data_low >> pixel_bit) & 1);
+
+        // Don't mix transparent pixels.
+        if color_index == 0 {
+            continue;
+        }
+
+        // Ensure the obj_fifo is long enough before trying to write to it.
+        // This can happen if the sprite is fetched when the BG fifo is short.
+        while i >= render_state.obj_fifo.len() {
+            render_state.obj_fifo.push(PixelData::new());
+        }
+
+        let existing_pixel = &mut render_state.obj_fifo.pixels[i];
+
+        // Priority check: DMG uses OAM address for priority. Lower address wins.
+        if obj.oam_index < existing_pixel.object_priority {
+            *existing_pixel = PixelData::obj_pixel(
+                color_index,
+                oam_entry.dmg_palette(),
+                oam_entry.priority(),
+                obj.oam_index,
+            );
+        }
+    }
+}
+
 async fn fetch_object_pixels(
     render_state: &mut PpuRenderState,
     obj: &ObjectData,
@@ -1172,31 +1306,50 @@ fn check_for_window_trigger(render_state: &mut PpuRenderState) {
     }
 }
 
-// This synchronous function replaces the async `render_pixel`
 fn render_pixel(render_state: &mut PpuRenderState) {
     // 1. SCX discard: Drop pixels if we are still aligning due to SCX.
     if render_state.scx_discard_count > 0 {
         render_state.scx_discard_count -= 1;
         let _ = render_state.bg_fifo.pop();
-        // NOTE: In a full implementation, you'd also pop from the object FIFO here.
+        if render_state.obj_fifo_valid {
+            let _ = render_state.obj_fifo.pop();
+        }
         return;
     }
 
-    // 2. Pop one pixel from the BG FIFO.
-    let bg_pixel = render_state.bg_fifo.pop().unwrap_or(PixelData::bg_pixel(0));
-    // NOTE: In a full implementation, you'd also pop from the object FIFO here.
+    // 2. Pop one pixel from each FIFO.
+    let bg = render_state.bg_fifo.pop().unwrap_or(PixelData::bg_pixel(0));
+    let obj = if render_state.obj_fifo_valid {
+        render_state.obj_fifo.pop().unwrap_or(PixelData::new())
+    } else {
+        PixelData::new()
+    };
+
+    // If the object fifo is now empty, mark it as invalid until the next sprite fetch.
+    if render_state.obj_fifo.is_empty() {
+        render_state.obj_fifo_valid = false;
+    }
 
     with_state_mut(|state| {
-        // Determine the final color based on BG/OBJ priority and palettes.
-        // This is a simplified version focusing on the BG pipeline.
+        let (bg_window_on, obj_on) = (state.ppu.bg_window_enable(), state.ppu.obj_enable());
 
-        let bg_color_idx = if state.ppu.bg_window_enable() {
-            bg_pixel.color_index
+        // Get the BG color index, respecting the master BG enable bit.
+        let bg_color_idx = if bg_window_on { bg.color_index } else { 0 };
+
+        // Determine if the object pixel should be drawn.
+        let obj_is_visible = obj_on && obj.color_index != 0;
+
+        // Priority rules:
+        // An object pixel is drawn if it's visible AND either:
+        // 1. The BG pixel beneath it is transparent (color index 0).
+        // 2. The object's priority flag is 0 (OBJ-over-BG).
+        let draw_object = obj_is_visible && (bg_color_idx == 0 || !obj.bg_priority);
+
+        let final_color = if draw_object {
+            state.ppu.get_obj_color(obj.palette, obj.color_index)
         } else {
-            0 // If master BG switch is off, BG is always color 0.
+            state.ppu.get_bg_color(bg_color_idx)
         };
-
-        let final_color = state.ppu.get_bg_color(bg_color_idx);
 
         state.ppu.set_pixel(
             render_state.pixel_x as usize,
