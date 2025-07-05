@@ -929,9 +929,6 @@ fn push_pixels(render_state: &mut PpuRenderState) {
     }
 }
 
-/// Checks if a sprite is visible at the current PPU internal X coordinate.
-/// The PPU can only fetch one sprite at a time.
-/// Returns the index of the object in `objects_on_line`.
 fn find_sprite_to_fetch(render_state: &PpuRenderState) -> Option<usize> {
     if !with_state(|s| s.ppu.obj_enable()) {
         return None;
@@ -939,106 +936,130 @@ fn find_sprite_to_fetch(render_state: &PpuRenderState) -> Option<usize> {
 
     let internal_x = render_state.internal_x;
 
-    // Find the first sprite that matches the current internal PPU coordinate
-    // and hasn't been fetched yet for this scanline.
     render_state.objects_on_line.iter().position(|obj| {
-        // Check if the sprite is at the current coordinate.
-        // A sprite at x=8 is triggered when internal_x=0.
-        // A sprite at x=0 is a special case and is handled differently by hardware.
-        // We'll use a simple check for now: obj.x is the screen position + 8.
-        let trigger_x = obj.x.saturating_sub(8);
+        // Sprites with x==0 or x>=168 never appear on screen
+        if obj.x == 0 || obj.x >= 168 {
+            return false;
+        }
 
-        // Has this sprite been fetched already?
+        // Hardware uses *wrapping* subtraction here – no saturation!
+        let trigger_x = obj.x.wrapping_sub(8);
+
         let already_fetched = render_state.fetched_objects.contains(&obj.oam_index);
 
         !already_fetched && trigger_x == internal_x
     })
 }
 
-/// Fetches the pixel data for a single sprite and mixes it into the object FIFO.
-/// This process takes a variable number of dots on real hardware, but we'll model
-/// it as a 6-dot stall for simplicity, which is a very close approximation.
+/// Fetch a single sprite’s pixel data and merge it into the OBJ-FIFO.
+/// This emulates the DMG rules for timing, masking, and priority.
 fn fetch_and_mix_sprite(render_state: &mut PpuRenderState, obj_index_on_line: usize) {
-    let obj = &render_state.objects_on_line[obj_index_on_line];
-    render_state.fetched_objects.push(obj.oam_index);
+    // ------------------------------------------------------------------
+    // 1.  Read the OAM entry and raw tile bytes we need
+    // ------------------------------------------------------------------
+    let (oam_entry, tile_data_low, tile_data_high) = with_state(|state| {
+        let oam_entry =
+            state.ppu.oam[render_state.objects_on_line[obj_index_on_line].oam_index as usize];
 
-    let (tile_data_low, tile_data_high) = with_state(|state| {
-        let oam_entry = &state.ppu.oam[obj.oam_index as usize];
-        let obj_size_16 = state.ppu.obj_size();
+        // 8×16 sprites pick the top/bottom tile by the *line* we’re on
+        let sprite_height_16 = state.ppu.obj_size();
         let ly = state.ppu.ly;
-
-        let sprite_height = if obj_size_16 { 16 } else { 8 };
-
-        // Calculate which line of the sprite we're on
         let sprite_line = ly.wrapping_sub(oam_entry.y.wrapping_sub(16));
-
         let tile_line = if oam_entry.y_flip() {
-            sprite_height - 1 - sprite_line
+            (if sprite_height_16 { 16 } else { 8 }) - 1 - sprite_line
         } else {
             sprite_line
         };
 
-        // For 8x16 sprites, the tile index is determined by the line
-        let tile_index = if obj_size_16 {
+        let tile_index = if sprite_height_16 {
             if tile_line < 8 {
-                oam_entry.tile_index & 0xFE // Use top tile
-            } else {
-                oam_entry.tile_index | 0x01 // Use bottom tile
+                oam_entry.tile_index & 0xFE
             }
+            // upper tile
+            else {
+                oam_entry.tile_index | 0x01
+            } // lower tile
         } else {
             oam_entry.tile_index
         };
 
-        // Fetch the two bytes of pixel data for that line
-        let tile_addr = state.ppu.get_object_tile_address(tile_index);
-        let tile_vram_index = ((tile_addr - 0x8000) / 16) as usize;
-        let byte_offset = ((tile_line % 8) * 2) as usize;
+        let base = state.ppu.get_object_tile_address(tile_index);
+        let bank = ((base - 0x8000) / 16) as usize;
+        let offs = (tile_line % 8 * 2) as usize;
 
-        (
-            state.ppu.vram[tile_vram_index][byte_offset],
-            state.ppu.vram[tile_vram_index][byte_offset + 1],
-        )
+        let low = state.ppu.vram[bank][offs];
+        let high = state.ppu.vram[bank][offs + 1];
+
+        (oam_entry, low, high)
     });
 
-    // If this is the first sprite we're fetching for this line, prepare the OBJ FIFO.
-    // It must be padded with transparent pixels to align with the BG FIFO.
-    if !render_state.obj_fifo_valid {
-        render_state.obj_fifo.clear();
-        for _ in 0..render_state.bg_fifo.len() {
-            render_state.obj_fifo.push(PixelData::new());
-        }
-        render_state.obj_fifo_valid = true;
+    // Mark the sprite as “already fetched” so we don’t fetch it again
+    render_state
+        .fetched_objects
+        .push(render_state.objects_on_line[obj_index_on_line].oam_index);
+
+    // ------------------------------------------------------------------
+    // 2.  Work out how many BG pixels are already waiting to be popped and
+    //     pad the OBJ-FIFO so that its first *valid* pixel lines up with
+    //     the BG-FIFO’s next pixel.
+    // ------------------------------------------------------------------
+    let sprite_screen_x = oam_entry.x as i16 - 8; // where the sprite starts on screen
+    let current_screen_x = render_state.pixel_x as i16; // where the LCD will draw next
+    let mut offset = sprite_screen_x - current_screen_x;
+
+    // If part of the sprite would fall left of X==0, we just skip those pixels.
+    let mut skip_left_pixels = 0u8;
+    if offset < 0 {
+        skip_left_pixels = (-offset) as u8; // 1 ≤ skip_left_pixels ≤ 7
+        offset = 0;
     }
 
-    // Mix the fetched sprite pixels into the object FIFO.
-    // We only overwrite a pixel if the new sprite has higher priority (lower OAM index)
-    // or if the pixel is currently transparent.
-    let oam_entry = with_state(|s| s.ppu.oam[obj.oam_index as usize].clone());
-    for i in 0..8 {
-        let pixel_bit = if oam_entry.x_flip() { i } else { 7 - i };
-        let color_index =
-            ((tile_data_high >> pixel_bit) & 1) << 1 | ((tile_data_low >> pixel_bit) & 1);
+    // Pad with transparent OBJ pixels until the first real pixel is aligned
+    while render_state.obj_fifo.len() < offset as usize {
+        render_state.obj_fifo.push(PixelData::new());
+    }
+    render_state.obj_fifo_valid = true; // OBJ-FIFO now in use
 
-        // Don't mix transparent pixels.
-        if color_index == 0 {
+    // ------------------------------------------------------------------
+    // 3.  Mix the (up to) 8 in-range sprite pixels into the FIFO
+    // ------------------------------------------------------------------
+    for i in 0..8 {
+        // Skip pixels that were left of the visible area
+        if i < skip_left_pixels {
             continue;
         }
 
-        // Ensure the obj_fifo is long enough before trying to write to it.
-        // This can happen if the sprite is fetched when the BG fifo is short.
-        while i >= render_state.obj_fifo.len() {
+        // Hardware fetches bits right-to-left unless X-flip is set
+        let bit = if oam_entry.x_flip() { i } else { 7 - i };
+        let colour = ((tile_data_high >> bit) & 1) << 1 | ((tile_data_low >> bit) & 1);
+
+        // Transparent sprite pixels never override anything
+        if colour == 0 {
+            continue;
+        }
+
+        // Index inside the OBJ-FIFO that corresponds to this screen pixel
+        let fifo_index = offset as usize + (i - skip_left_pixels) as usize;
+
+        // Ensure the FIFO is long enough
+        while fifo_index >= render_state.obj_fifo.len() {
             render_state.obj_fifo.push(PixelData::new());
         }
 
-        let existing_pixel = &mut render_state.obj_fifo.pixels[i];
+        let dst = &mut render_state.obj_fifo.pixels[fifo_index];
 
-        // Priority check: DMG uses OAM address for priority. Lower address wins.
-        if obj.oam_index < existing_pixel.object_priority {
-            *existing_pixel = PixelData::obj_pixel(
-                color_index,
+        // DMG priority rule:
+        //   – If background pixel is still transparent (dst.color_index==0) → overwrite
+        //   – Otherwise keep the first opaque pixel; later sprites only win
+        //     if *both* pixels are opaque *and* they have a lower OAM index.
+        if dst.color_index == 0
+            || render_state.objects_on_line[obj_index_on_line].oam_index < dst.object_priority
+        {
+            *dst = PixelData::obj_pixel(
+                colour,
                 oam_entry.dmg_palette(),
                 oam_entry.priority(),
-                obj.oam_index,
+                render_state.objects_on_line[obj_index_on_line].oam_index,
             );
         }
     }
