@@ -1066,32 +1066,40 @@ fn fetch_and_mix_sprite(render_state: &mut PpuRenderState, obj_index_on_line: us
 }
 
 fn check_for_window_trigger(render_state: &mut PpuRenderState) {
-    // Do nothing if window already triggered this line
+    // Already triggered on this line?
     if render_state.window_triggered {
         return;
     }
 
-    let (is_win_visible, ly, wy, wx) =
+    let (win_enabled_now, ly, wy, wx) =
         with_state(|s| (s.ppu.should_render_window(), s.ppu.ly, s.ppu.wy, s.ppu.wx));
 
-    if !is_win_visible {
+    if !win_enabled_now {
         return;
     }
 
-    // The trigger is an exact match between the PPU's internal X counter and WX.
-    // WX has a +7 bias, so WX=7 means the first pixel (X=0).
-    if wx == render_state.internal_x + 7 {
+    // On the DMG:
+    //   – If WX ≤ 7  → the first window pixel is drawn at X = 0.
+    //   – Else       → first pixel is drawn at X = WX-7.
+    let first_win_x = if wx <= 7 { 0 } else { (wx as i16 - 7) as u8 };
+
+    if render_state.pixel_x == first_win_x {
+        // ----- Window starts NOW -----
         render_state.window_triggered = true;
+
+        // Flush any BG pixels that were already fetched but not displayed.
         render_state.bg_fifo.clear();
+
+        // Reset the fetcher so that it starts reading the window tile map.
         render_state.fetcher.reset();
         render_state.fetcher.is_window = true;
 
         with_state_mut(|s| {
-            // The internal window line counter increments only when a line with the window is drawn
+            // Window line counter: increments only when a line with window is drawn
             if ly == wy {
                 s.ppu.window_line = 0;
             } else {
-                s.ppu.window_line += 1;
+                s.ppu.window_line = s.ppu.window_line.wrapping_add(1);
             }
             render_state.fetcher.window_line = s.ppu.window_line;
         });
