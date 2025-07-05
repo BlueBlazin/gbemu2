@@ -388,10 +388,12 @@ const MODE_DRAWING: u8 = 3;
 // These are mixed during rendering to produce the final output
 #[derive(Debug, Clone, Copy)]
 pub struct PixelData {
-    pub color_index: u8,     // 0-3 palette index (NOT final color)
-    pub palette: bool,       // Object palette (OBP0=false, OBP1=true)
-    pub bg_priority: bool,   // Background priority flag (from OAM attributes)
-    pub object_priority: u8, // OAM index for priority sorting (lower = higher priority)
+    pub color_index: u8,   // 0-3 palette index (NOT final color)
+    pub palette: bool,     // Object palette (OBP0=false, OBP1=true)
+    pub bg_priority: bool, // Background priority flag (from OAM attributes)
+    /// Encodes sprite priority: (x << 8) | oam_index
+    /// Lower value → higher priority
+    pub priority_key: u16,
 }
 
 impl PixelData {
@@ -400,7 +402,7 @@ impl PixelData {
             color_index: 0,
             palette: false,
             bg_priority: false,
-            object_priority: 255,
+            priority_key: 0xFFFF, // ‘no sprite’ – always loses
         }
     }
 
@@ -409,16 +411,22 @@ impl PixelData {
             color_index,
             palette: false,
             bg_priority: false,
-            object_priority: 255,
+            priority_key: 0xFFFF, // BG pixels never compete with each other
         }
     }
 
-    pub fn obj_pixel(color_index: u8, palette: bool, bg_priority: bool, priority: u8) -> Self {
+    pub fn obj_pixel(
+        color_index: u8,
+        palette: bool,
+        bg_priority: bool,
+        sprite_x: u8,
+        oam_index: u8,
+    ) -> Self {
         Self {
             color_index,
             palette,
             bg_priority,
-            object_priority: priority,
+            priority_key: ((sprite_x as u16) << 8) | (oam_index as u16),
         }
     }
 }
@@ -1024,43 +1032,34 @@ fn fetch_and_mix_sprite(render_state: &mut PpuRenderState, obj_index_on_line: us
     // 3.  Mix the (up to) 8 in-range sprite pixels into the FIFO
     // ------------------------------------------------------------------
     for i in 0..8 {
-        // Skip pixels that were left of the visible area
         if i < skip_left_pixels {
             continue;
         }
 
-        // Hardware fetches bits right-to-left unless X-flip is set
         let bit = if oam_entry.x_flip() { i } else { 7 - i };
         let colour = ((tile_data_high >> bit) & 1) << 1 | ((tile_data_low >> bit) & 1);
-
-        // Transparent sprite pixels never override anything
         if colour == 0 {
             continue;
-        }
+        } // transparent
 
-        // Index inside the OBJ-FIFO that corresponds to this screen pixel
         let fifo_index = offset as usize + (i - skip_left_pixels) as usize;
-
-        // Ensure the FIFO is long enough
         while fifo_index >= render_state.obj_fifo.len() {
             render_state.obj_fifo.push(PixelData::new());
         }
 
         let dst = &mut render_state.obj_fifo.pixels[fifo_index];
 
-        // DMG priority rule:
-        //   – If background pixel is still transparent (dst.color_index==0) → overwrite
-        //   – Otherwise keep the first opaque pixel; later sprites only win
-        //     if *both* pixels are opaque *and* they have a lower OAM index.
-        if dst.color_index == 0
-            || render_state.objects_on_line[obj_index_on_line].oam_index < dst.object_priority
-        {
-            *dst = PixelData::obj_pixel(
-                colour,
-                oam_entry.dmg_palette(),
-                oam_entry.priority(),
-                render_state.objects_on_line[obj_index_on_line].oam_index,
-            );
+        let new_pixel = PixelData::obj_pixel(
+            colour,
+            oam_entry.dmg_palette(),
+            oam_entry.priority(),
+            oam_entry.x, // <<< X coordinate
+            render_state.objects_on_line[obj_index_on_line].oam_index,
+        );
+
+        // Replace if destination is still transparent OR we have higher priority
+        if dst.color_index == 0 || new_pixel.priority_key < dst.priority_key {
+            *dst = new_pixel;
         }
     }
 }
