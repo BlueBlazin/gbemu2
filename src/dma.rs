@@ -77,8 +77,6 @@ pub async fn dma_component() {
 async fn await_dma_transfer() {
     // Transfer 160 bytes from source to OAM over 160 M-cycles
     for byte_index in 0..160 {
-        sleep(4).await; // 1 M-cycle per byte (4 T-cycles)
-
         with_state_mut(|state| {
             let source_addr = state.dma.source_address.wrapping_add(byte_index as u16);
             let dest_addr = 0xFE00 + byte_index as u16;
@@ -100,6 +98,8 @@ async fn await_dma_transfer() {
             }
             state.dma.bytes_transferred = byte_index + 1;
         });
+
+        sleep(4).await; // 1 M-cycle per byte (4 T-cycles)
     }
 
     // Transfer complete

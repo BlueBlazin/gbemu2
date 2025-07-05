@@ -53,7 +53,10 @@ impl MMU {
                 _ => 0xFF, // All other addresses return 0xFF during DMA
             }
         } else {
-            self.read_unrestricted(address, ppu)
+            match address {
+                0x8000..=0x9FFF if ppu.ppu_mode == 3 => 0xFF,
+                _ => self.read_unrestricted(address, ppu),
+            }
         }
     }
 
@@ -69,16 +72,7 @@ impl MMU {
             }
 
             // Video RAM (0x8000-0x9FFF) - delegated to PPU
-            0x8000..=0x9FFF => {
-                // Check if VRAM is accessible based on PPU mode
-                let mode = ppu.ppu_mode;
-                if mode == 3 {
-                    // Mode 3 (Drawing) - VRAM not accessible
-                    0xFF
-                } else {
-                    self.read_vram(address, ppu)
-                }
-            }
+            0x8000..=0x9FFF => self.read_vram(address, ppu),
 
             // Work RAM (0xC000-0xDFFF)
             0xC000..=0xDFFF => self.wram[(address & 0x1FFF) as usize],
@@ -107,9 +101,10 @@ impl MMU {
 
             // I/O Registers (0xFF00-0xFF7F)
             0xFF00..=0xFF7F => {
-                // I/O registers should be handled by EmulatorState
-                // Return default value if we somehow get here
-                self.io_registers[(address - 0xFF00) as usize]
+                // // I/O registers should be handled by EmulatorState
+                // // Return default value if we somehow get here
+                // self.io_registers[(address - 0xFF00) as usize]
+                panic!("IO register accessed from wrong place.");
             }
 
             // High RAM (0xFF80-0xFFFE)
@@ -174,7 +169,11 @@ impl MMU {
                 }
             }
         } else {
-            self.write_unrestricted(address, value, ppu, dirty_flags);
+            match address {
+                // Write to VRAM not allowed during mode 3
+                0x8000..=0x9FFF if ppu.ppu_mode == 3 => (),
+                _ => self.write_unrestricted(address, value, ppu, dirty_flags),
+            }
         }
     }
 
@@ -196,34 +195,27 @@ impl MMU {
 
             // Video RAM (0x8000-0x9FFF) - delegated to PPU
             0x8000..=0x9FFF => {
-                // Check if VRAM is accessible based on PPU mode
-                let mode = ppu.ppu_mode;
-
-                if mode != 3 {
-                    // VRAM accessible in modes 0, 1, 2 but not mode 3
-                    let vram_addr = (address & 0x1FFF) as usize;
-                    if vram_addr < 0x1800 {
-                        // Tile data area (0x8000-0x97FF)
-                        let tile_index = vram_addr / 16;
-                        let byte_in_tile = vram_addr % 16;
-                        ppu.vram[tile_index][byte_in_tile] = value;
-                        // Mark tile data as dirty
-                        dirty_flags.tile_data = true;
+                let vram_addr = (address & 0x1FFF) as usize;
+                if vram_addr < 0x1800 {
+                    // Tile data area (0x8000-0x97FF)
+                    let tile_index = vram_addr / 16;
+                    let byte_in_tile = vram_addr % 16;
+                    ppu.vram[tile_index][byte_in_tile] = value;
+                    // Mark tile data as dirty
+                    dirty_flags.tile_data = true;
+                } else {
+                    // Tile map areas (0x9800-0x9FFF)
+                    let map_addr = vram_addr - 0x1800;
+                    if map_addr < 0x400 {
+                        ppu.bg_tile_map_0[map_addr] = value;
+                        // Mark tilemap 0 as dirty
+                        dirty_flags.bg_tilemap_0 = true;
                     } else {
-                        // Tile map areas (0x9800-0x9FFF)
-                        let map_addr = vram_addr - 0x1800;
-                        if map_addr < 0x400 {
-                            ppu.bg_tile_map_0[map_addr] = value;
-                            // Mark tilemap 0 as dirty
-                            dirty_flags.bg_tilemap_0 = true;
-                        } else {
-                            ppu.bg_tile_map_1[map_addr - 0x400] = value;
-                            // Mark tilemap 1 as dirty
-                            dirty_flags.bg_tilemap_1 = true;
-                        }
+                        ppu.bg_tile_map_1[map_addr - 0x400] = value;
+                        // Mark tilemap 1 as dirty
+                        dirty_flags.bg_tilemap_1 = true;
                     }
                 }
-                // Writes are ignored when VRAM is not accessible
             }
 
             // Work RAM (0xC000-0xDFFF)
@@ -265,9 +257,10 @@ impl MMU {
 
             // I/O Registers (0xFF00-0xFF7F)
             0xFF00..=0xFF7F => {
-                // I/O registers should be handled by EmulatorState
-                // Store in local array if we somehow get here
-                self.io_registers[(address - 0xFF00) as usize] = value;
+                // // I/O registers should be handled by EmulatorState
+                // // Store in local array if we somehow get here
+                // self.io_registers[(address - 0xFF00) as usize] = value;
+                panic!("IO register accessed from wrong place.");
             }
 
             // High RAM (0xFF80-0xFFFE)
