@@ -29,11 +29,11 @@ pub struct SquareChannel {
 
     // Sweep (CH1 only)
     pub sweep_enabled: bool,
-    pub sweep_pace: u8,        // 0-7 (0 = disabled)
-    pub sweep_direction: bool, // false = addition, true = subtraction
-    pub sweep_step: u8,        // 0-7
-    pub sweep_timer: u8,       // Current sweep timer
-    pub sweep_shadow: u16,     // Shadow register for sweep
+    pub sweep_pace: u8,               // 0-7 (0 = disabled)
+    pub sweep_direction: bool,        // false = addition, true = subtraction
+    pub sweep_step: u8,               // 0-7
+    pub sweep_timer: u8,              // Current sweep timer
+    pub sweep_shadow: u16,            // Shadow register for sweep
     pub sweep_calculation_made: bool, // Track if calculation was made in subtraction mode
 }
 
@@ -78,13 +78,21 @@ impl SquareChannel {
         self.period_timer = ((2048 - self.period) * 4) | old_low_bits;
 
         // Reset envelope
-        self.envelope_timer = if self.envelope_pace == 0 { 8 } else { self.envelope_pace };
+        self.envelope_timer = if self.envelope_pace == 0 {
+            8
+        } else {
+            self.envelope_pace
+        };
         self.volume = self.initial_volume;
 
         // Reset sweep (CH1 only)
         if has_sweep {
             self.sweep_shadow = self.period;
-            self.sweep_timer = if self.sweep_pace == 0 { 8 } else { self.sweep_pace };
+            self.sweep_timer = if self.sweep_pace == 0 {
+                8
+            } else {
+                self.sweep_pace
+            };
             self.sweep_enabled = self.sweep_pace != 0 || self.sweep_step != 0;
             self.sweep_calculation_made = false; // Reset calculation tracking
 
@@ -135,9 +143,14 @@ impl SquareChannel {
         }
 
         if self.sweep_timer == 0 {
-            self.sweep_timer = if self.sweep_pace == 0 { 8 } else { self.sweep_pace };
+            self.sweep_timer = if self.sweep_pace == 0 {
+                8
+            } else {
+                self.sweep_pace
+            };
 
-            if self.sweep_enabled && self.sweep_pace != 0 {
+            // Remove the check for sweep_pace != 0 here!
+            if self.sweep_enabled {
                 if self.calculate_sweep_frequency() {
                     // Calculate again immediately but don't write back - check for overflow again
                     if !self.calculate_sweep_frequency_no_writeback() {
@@ -149,16 +162,16 @@ impl SquareChannel {
     }
 
     pub fn clock_envelope(&mut self) {
-        if self.envelope_pace == 0 {
-            return;
-        }
-
         if self.envelope_timer > 0 {
             self.envelope_timer -= 1;
         }
 
         if self.envelope_timer == 0 {
-            self.envelope_timer = if self.envelope_pace == 0 { 8 } else { self.envelope_pace };
+            self.envelope_timer = if self.envelope_pace == 0 {
+                8
+            } else {
+                self.envelope_pace
+            };
 
             if self.envelope_direction && self.volume < 15 {
                 self.volume += 1;

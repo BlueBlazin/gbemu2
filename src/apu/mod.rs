@@ -743,21 +743,51 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
 }
 
 pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
-    // Special handling for NR52, as it can be written even when APU is off.
+    // Special handling for writes when APU is disabled
     if !apu_state.master_enable && address != NR52_REGISTER {
-        if address >= WAVE_RAM_START && address <= WAVE_RAM_END {
-            // DMG allows writing to Wave RAM when APU is off.
-            apu_state.ch3.write_wave_ram(address, value);
+        match address {
+            // Length registers can be written when APU is off
+            NR11_REGISTER => {
+                apu_state.ch1.duty = (value >> 6) & 0x03;
+                apu_state.ch1.length_timer = 64 - (value & 0x3F);
+                return;
+            }
+            NR21_REGISTER => {
+                apu_state.ch2.duty = (value >> 6) & 0x03;
+                apu_state.ch2.length_timer = 64 - (value & 0x3F);
+                return;
+            }
+            NR31_REGISTER => {
+                apu_state.ch3.set_length_timer(value);
+                return;
+            }
+            NR41_REGISTER => {
+                apu_state.ch4.set_length_timer(value);
+                return;
+            }
+            // Wave RAM can also be written when APU is off
+            WAVE_RAM_START..=WAVE_RAM_END => {
+                apu_state.ch3.write_wave_ram(address, value);
+                return;
+            }
+            _ => return, // Other registers are ignored when APU is off
         }
-        return; // Ignore writes to other registers when APU is disabled
     }
 
     match address {
         NR10_REGISTER => {
             let old_direction = apu_state.ch1.sweep_direction;
+            let old_pace = apu_state.ch1.sweep_pace;
+
             apu_state.ch1.sweep_pace = (value >> 4) & 0x07;
             apu_state.ch1.sweep_direction = (value & 0x08) != 0;
             apu_state.ch1.sweep_step = value & 0x07;
+
+            // Special handling when pace is written as 0
+            if apu_state.ch1.sweep_pace == 0 && old_pace != 0 {
+                // When 0 is written to pace, reload the timer immediately with 8
+                apu_state.ch1.sweep_timer = 8;
+            }
 
             // Clearing the sweep direction bit after subtraction calculation disables the channel
             if old_direction
@@ -1016,32 +1046,30 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             let old_enable = apu_state.master_enable;
             let new_enable = (value & 0x80) != 0;
 
-            // On DMG, length timers are not reset by an APU power cycle.
-            // We must capture them before any state is modified.
-            let old_len_ch1 = apu_state.ch1.length_timer;
-            let old_len_ch2 = apu_state.ch2.length_timer;
-            let old_len_ch3 = apu_state.ch3.length_timer;
-            let old_len_ch4 = apu_state.ch4.length_timer;
-
             if !new_enable {
-                // APU is being turned OFF. Reset all registers.
+                // APU is being turned OFF
+                // On DMG, length counters are NOT reset when APU is powered off
+                // Save length timers before any modification
+                let saved_len_ch1 = apu_state.ch1.length_timer;
+                let saved_len_ch2 = apu_state.ch2.length_timer;
+                let saved_len_ch3 = apu_state.ch3.length_timer;
+                let saved_len_ch4 = apu_state.ch4.length_timer;
+
+                // Reset most state but preserve length timers
                 *apu_state = ApuState::new();
                 apu_state.master_enable = false;
-            } else {
-                // APU is being turned ON.
-                apu_state.master_enable = true;
-                if !old_enable {
-                    // This is the moment the APU transitions from OFF to ON.
-                    // Reset the frame sequencer.
-                    apu_state.frame_sequencer_step = 0;
-                    apu_state.frame_sequencer_timer = 8192; // Schedule first tick
 
-                    // Restore the length timers from before the power cycle.
-                    apu_state.ch1.length_timer = old_len_ch1;
-                    apu_state.ch2.length_timer = old_len_ch2;
-                    apu_state.ch3.length_timer = old_len_ch3;
-                    apu_state.ch4.length_timer = old_len_ch4;
-                }
+                // Restore the length timers
+                apu_state.ch1.length_timer = saved_len_ch1;
+                apu_state.ch2.length_timer = saved_len_ch2;
+                apu_state.ch3.length_timer = saved_len_ch3;
+                apu_state.ch4.length_timer = saved_len_ch4;
+            } else if !old_enable {
+                // APU is being turned ON (was OFF)
+                apu_state.master_enable = true;
+                // Reset the frame sequencer when turning on
+                apu_state.frame_sequencer_step = 0;
+                apu_state.frame_sequencer_timer = 8192;
             }
         }
 
