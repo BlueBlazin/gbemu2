@@ -116,6 +116,8 @@ pub struct PpuState {
     pub ppu_mode: u8,    // Current PPU mode (0-3)
     pub dots: u16,       // Current dot/cycle within scanline
     pub window_line: u8, // Internal window line counter
+    // STAT interrupt line state tracking
+    pub stat_line: bool, // Current state of STAT interrupt line
 }
 
 impl PpuState {
@@ -140,6 +142,7 @@ impl PpuState {
             ppu_mode: 2,                  // Start in mode 2 (OAM scan)
             dots: 0,
             window_line: 0,
+            stat_line: false, // STAT line starts low
         }
     }
 
@@ -227,20 +230,30 @@ impl PpuState {
         self.stat = (self.stat & 0xFC) | (mode & 0x03);
     }
 
-    // Check if STAT interrupt should be triggered
-    pub fn should_trigger_stat_interrupt(&self) -> bool {
+    pub fn calculate_stat_line(&self) -> bool {
         // Check LYC=LY condition
-        if self.lyc_int_select() && self.lyc_equals_ly() {
-            return true;
-        }
+        let lyc_condition = self.lyc_int_select() && self.lyc_equals_ly();
 
-        // Check mode interrupts
-        match self.ppu_mode {
-            0 if self.mode_0_int_select() => true, // HBlank
-            1 if self.mode_1_int_select() => true, // VBlank
-            2 if self.mode_2_int_select() => true, // OAM Scan
-            _ => false,
-        }
+        // Check mode conditions
+        let mode_condition = match self.ppu_mode {
+            0 => self.mode_0_int_select(), // HBlank
+            1 => self.mode_1_int_select(), // VBlank
+            2 => self.mode_2_int_select(), // OAM Scan
+            _ => false,                    // Mode 3 (Drawing) has no interrupt
+        };
+
+        // STAT line is high if any enabled condition is true
+        lyc_condition || mode_condition
+    }
+
+    // Check if STAT interrupt should be triggered
+    pub fn check_and_trigger_stat_interrupt(&mut self) -> bool {
+        let new_stat_line = self.calculate_stat_line();
+        let old_stat_line = self.stat_line;
+        self.stat_line = new_stat_line;
+
+        // Trigger interrupt only on rising edge (false -> true)
+        !old_stat_line && new_stat_line
     }
 
     // Tile addressing helpers
@@ -570,12 +583,12 @@ pub async fn ppu() {
             with_state_mut(|state| {
                 state.ppu.ly = 0;
                 state.ppu.dots = 0;
-                state.ppu.set_mode(MODE_HBLANK); // Or MODE_OAM_SCAN, Mode 0 is common
+                state.ppu.set_mode(MODE_HBLANK);
                 state.ppu.window_line = 0;
-                // You might also want to clear the framebuffer here.
+                state.ppu.stat_line = false; // Reset STAT line
                 state.ppu.clear_framebuffer();
             });
-            emit_event(Event::VBlank); // Force a screen update to show it's blank
+            emit_event(Event::VBlank);
         }
         lcd_was_on = lcd_is_on;
 
@@ -610,7 +623,7 @@ async fn execute_visible_scanline(render_state: &mut PpuRenderState) {
     with_state_mut(|state| state.ppu.set_mode(MODE_OAM_SCAN));
 
     // Trigger STAT interrupt if enabled
-    let should_interrupt = with_state(|state| state.ppu.should_trigger_stat_interrupt());
+    let should_interrupt = with_state_mut(|state| state.ppu.check_and_trigger_stat_interrupt());
     if should_interrupt {
         request_lcd_interrupt();
     }
@@ -626,7 +639,7 @@ async fn execute_visible_scanline(render_state: &mut PpuRenderState) {
     with_state_mut(|state| state.ppu.set_mode(MODE_HBLANK));
 
     // Trigger STAT interrupt if enabled
-    let should_interrupt = with_state(|state| state.ppu.should_trigger_stat_interrupt());
+    let should_interrupt = with_state_mut(|state| state.ppu.check_and_trigger_stat_interrupt());
     if should_interrupt {
         request_lcd_interrupt();
     }
@@ -643,7 +656,7 @@ async fn execute_visible_scanline(render_state: &mut PpuRenderState) {
         state.ppu.update_lyc_ly_flag();
 
         // Check for LYC=LY interrupt
-        state.ppu.should_trigger_stat_interrupt()
+        state.ppu.check_and_trigger_stat_interrupt()
     });
 
     if should_interrupt {
@@ -655,17 +668,19 @@ async fn execute_vblank_scanline() {
     let ly = with_state(|state| state.ppu.ly);
 
     if ly == VISIBLE_SCANLINES {
-        // First VBlank scanline - set mode and trigger interrupts
-        with_state_mut(|state| {
+        // First VBlank scanline - set mode and check interrupts
+        let should_interrupt = with_state_mut(|state| {
             state.ppu.set_mode(MODE_VBLANK);
-            state.ppu.window_line = 0; // ADD THIS: Reset window line counter at VBlank start
+            state.ppu.window_line = 0;
+
+            // Check STAT interrupt with blocking
+            state.ppu.check_and_trigger_stat_interrupt()
         });
 
-        // Trigger VBlank interrupt
+        // Trigger VBlank interrupt (always happens regardless of STAT)
         request_vblank_interrupt();
 
-        // Trigger STAT interrupt if VBlank interrupt is enabled
-        let should_interrupt = with_state(|state| state.ppu.should_trigger_stat_interrupt());
+        // Trigger STAT interrupt if needed
         if should_interrupt {
             request_lcd_interrupt();
         }
@@ -680,8 +695,8 @@ async fn execute_vblank_scanline() {
         state.ppu.dots = 0;
         state.ppu.update_lyc_ly_flag();
 
-        // Check for LYC=LY interrupt
-        state.ppu.should_trigger_stat_interrupt()
+        // Check for STAT interrupt (LYC=LY might have changed)
+        state.ppu.check_and_trigger_stat_interrupt()
     });
 
     if should_interrupt {
@@ -699,8 +714,8 @@ async fn execute_last_scanline() {
         state.ppu.dots = 0;
         state.ppu.update_lyc_ly_flag();
 
-        // Check for LYC=LY interrupt
-        state.ppu.should_trigger_stat_interrupt()
+        // Check for STAT interrupt (LYC=LY might have changed)
+        state.ppu.check_and_trigger_stat_interrupt()
     });
 
     if should_interrupt {

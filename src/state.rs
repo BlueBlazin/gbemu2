@@ -362,6 +362,12 @@ impl EmulatorState {
             crate::ppu::STAT_REGISTER => {
                 // Only bits 3-6 are writable
                 self.ppu.stat = (self.ppu.stat & 0x87) | (value & 0x78);
+
+                // Check if this write causes a STAT interrupt
+                if self.ppu.check_and_trigger_stat_interrupt() {
+                    self.interrupts
+                        .request_interrupt(crate::interrupts::InterruptType::Lcd);
+                }
             }
             crate::ppu::SCY_REGISTER => self.ppu.scy = value,
             crate::ppu::SCX_REGISTER => self.ppu.scx = value,
@@ -369,8 +375,9 @@ impl EmulatorState {
             crate::ppu::LYC_REGISTER => {
                 self.ppu.lyc = value;
                 self.ppu.update_lyc_ly_flag();
-                // Check for STAT interrupt
-                if self.ppu.lyc_int_select() && self.ppu.lyc_equals_ly() {
+
+                // Check for STAT interrupt with blocking
+                if self.ppu.check_and_trigger_stat_interrupt() {
                     self.interrupts
                         .request_interrupt(crate::interrupts::InterruptType::Lcd);
                 }
