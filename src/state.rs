@@ -320,7 +320,7 @@ impl EmulatorState {
             | crate::timer::TAC_REGISTER => {
                 crate::timer::read_timer_register_direct(address, &self.timer)
             }
-            crate::io::DMA_REGISTER => (self.dma.source_address >> 8) as u8,
+            crate::io::DMA_REGISTER => self.dma.last_written_value,
             // PPU registers
             crate::ppu::LCDC_REGISTER => self.ppu.lcdc,
             crate::ppu::STAT_REGISTER => self.ppu.stat | 0x80, // Bit 7 always reads as 1

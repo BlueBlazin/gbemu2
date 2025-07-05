@@ -8,6 +8,7 @@ pub struct DmaState {
     pub active: bool,          // Whether DMA transfer is currently active
     pub delay_cycles: u8,      // Delay before transfer starts (2 M-cycles)
     pub request_pending: bool, // Whether a DMA request is pending
+    pub last_written_value: u8,
 }
 
 impl Default for DmaState {
@@ -24,10 +25,14 @@ impl DmaState {
             active: false,
             delay_cycles: 0,
             request_pending: false,
+            last_written_value: 0xFF,
         }
     }
 
     pub fn request_transfer(&mut self, source_page: u8) {
+        // Store the value written to the DMA register
+        self.last_written_value = source_page;
+
         // Set source address from FF46 register value
         // Upper 8 bits come from register, lower 8 bits start at 0x00
         self.source_address = (source_page as u16) << 8;
