@@ -237,3 +237,7 @@ pub fn execute_reti() {
         state.interrupts.enable_interrupts_and_return();
     });
 }
+
+pub fn pending_enabled_mask() -> u8 {
+    with_state(|s| s.interrupts.ie & s.interrupts.if_reg & 0x1F)
+}

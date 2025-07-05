@@ -19,14 +19,19 @@ async fn fetch() -> u8 {
     let pc = with_state(|state| state.cpu.pc);
     let value = memory_read(pc).await;
 
-    // Log opcode in debug mode
+    // Handle PC increment
     with_state_mut(|state| {
         if state.debug_mode {
             state.opcode_log.push((pc, value));
         }
 
-        // Increment PC after fetch
-        state.cpu.pc = pc.wrapping_add(1);
+        if state.cpu.halt_bug {
+            // HALT bug: don't increment PC this time
+            state.cpu.halt_bug = false;
+        } else {
+            // Normal operation: increment PC
+            state.cpu.pc = state.cpu.pc.wrapping_add(1);
+        }
     });
 
     value
@@ -2402,45 +2407,32 @@ async fn execute_nop() {
 }
 
 async fn execute_halt() {
-    // HALT - Variable timing based on interrupt state
-    let (ime, pending_interrupts) = with_state(|state| {
-        let ie = state.interrupts.ie;
-        let if_reg = state.interrupts.if_reg;
-        (state.interrupts.ime, ie & if_reg)
+    // Get current state
+    let (ime, ie, if_reg) = with_state(|state| {
+        (
+            state.interrupts.ime,
+            state.interrupts.ie,
+            state.interrupts.if_reg,
+        )
     });
 
-    if ime {
-        // IME = 1: Normal halt behavior
-        // Wait until an interrupt is pending, then it will be handled normally
-        loop {
-            sleep(4).await; // Wait one cycle
-            let pending = with_state(|state| state.interrupts.ie & state.interrupts.if_reg);
-            if pending != 0 {
-                break; // Exit halt when interrupt is pending
-            }
-        }
-    } else {
-        // IME = 0: Special halt behavior
-        if pending_interrupts != 0 {
-            // HALT Bug: If interrupt is already pending when HALT executes with IME=0,
-            // the halt exits immediately but PC fails to increment properly.
-            // This causes the next byte to be read twice.
+    let pending = ie & if_reg & 0x1F;
 
-            // Decrement PC to simulate the halt bug (next instruction will be read twice)
-            with_state_mut(|state| {
-                state.cpu.pc = state.cpu.pc.wrapping_sub(1);
-            });
-        } else {
-            // No interrupts pending: wait until one becomes pending, but don't handle it
-            loop {
-                sleep(4).await; // Wait one cycle
-                let pending = with_state(|state| state.interrupts.ie & state.interrupts.if_reg);
-                if pending != 0 {
-                    break; // Exit halt when interrupt becomes pending
-                }
-            }
-        }
+    // ------------------ CASE 1 ------------------
+    // IME = 0 **and** at least one enabled interrupt is _already_ pending
+    if !ime && pending != 0 {
+        // -> do _not_ enter the low-power halt state
+        // -> trigger the infamous HALT-bug (skip next PC increment once)
+        with_state_mut(|state| state.cpu.halt_bug = true);
+
+        return;
     }
+
+    // ------------------ CASE 2 ------------------
+    // normal HALT – CPU really stops until an interrupt becomes serviceable
+    with_state_mut(|state| state.cpu.halted = true);
+    // first internal cycle of HALT
+    sleep(4).await;
 }
 
 async fn execute_stop() {
@@ -2577,18 +2569,43 @@ async fn decode_and_execute(opcode: u8) {
 
 pub async fn cpu() {
     loop {
-        // Check for pending interrupts before executing instruction
-        if let Some(interrupt) = interrupts::check_interrupts() {
-            interrupts::handle_interrupt(interrupt).await;
+        /* ---------------------------------------------------------------- */
+        /* 1.  If the core is in its low-power HALT state …                 */
+        /* ---------------------------------------------------------------- */
+        if with_state(|state| state.cpu.halted) {
+            let pending = interrupts::pending_enabled_mask();
+
+            if pending == 0 {
+                // still nothing that could wake us – burn one M-cycle
+                sleep(4).await;
+                continue;
+            }
+
+            // ---- an enabled interrupt has appeared: wake the CPU --------
+            with_state_mut(|state| state.cpu.halted = false);
+
+            // if IME is set, we must *also* service that interrupt now
+            if let Some(int) = interrupts::check_interrupts() {
+                interrupts::handle_interrupt(int).await;
+            }
+
+            // (whether or not an ISR was taken, start the next fetch below)
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* 2.  Normal interrupt servicing (IME == 1)                        */
+        /* ---------------------------------------------------------------- */
+        if let Some(int) = interrupts::check_interrupts() {
+            interrupts::handle_interrupt(int).await;
             continue;
         }
 
-        // Fetch and execute instruction
-        let instruction = fetch().await;
+        /* ---------------------------------------------------------------- */
+        /* 3.  Fetch–decode–execute                                         */
+        /* ---------------------------------------------------------------- */
+        let opcode = fetch().await;
+        decode_and_execute(opcode).await;
 
-        decode_and_execute(instruction).await;
-
-        // Process EI delay after instruction execution
-        interrupts::process_ei_delay();
+        interrupts::process_ei_delay(); // EI one-instruction latency
     }
 }

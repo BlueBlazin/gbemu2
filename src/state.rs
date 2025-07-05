@@ -101,6 +101,8 @@ pub struct CpuState {
     pub l: u8,
     pub sp: u16,
     pub pc: u16,
+    pub halt_bug: bool,
+    pub halted: bool,
 }
 
 impl Default for CpuState {
@@ -122,6 +124,8 @@ impl CpuState {
             l: 0x4D,    // L = $4D
             sp: 0xFFFE, // SP = $FFFE
             pc: 0x0100, // PC = $0100
+            halt_bug: false,
+            halted: false,
         }
     }
 
@@ -306,9 +310,9 @@ impl EmulatorState {
             crate::io::P1_REGISTER => {
                 // Calculate P1 value based on current joypad state and selection
                 let p1_select = self.mmu.io_registers[0x00];
-                self.joypad.calculate_p1(p1_select)
+                self.joypad.calculate_p1(p1_select) | 0xC0 // Bits 6-7 always 1
             }
-            crate::io::IF_REGISTER => self.interrupts.if_reg,
+            crate::io::IF_REGISTER => self.interrupts.if_reg | 0xE0,
             crate::io::IE_REGISTER => self.interrupts.ie,
             crate::timer::DIV_REGISTER
             | crate::timer::TIMA_REGISTER
@@ -344,7 +348,7 @@ impl EmulatorState {
                 // Store the selection bits, the lower nibble will be calculated on read
                 self.mmu.io_registers[0x00] = (value & 0x30) | 0xC0; // Keep bits 6-7 high, bits 0-3 are calculated on read
             }
-            crate::io::IF_REGISTER => self.interrupts.if_reg = value,
+            crate::io::IF_REGISTER => self.interrupts.if_reg = (value & 0x1F) | 0xE0,
             crate::io::IE_REGISTER => self.interrupts.ie = value,
             crate::timer::DIV_REGISTER
             | crate::timer::TIMA_REGISTER
