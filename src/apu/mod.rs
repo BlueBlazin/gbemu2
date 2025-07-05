@@ -563,6 +563,34 @@ impl ApuState {
     }
 }
 
+#[inline]
+fn apply_zombie_mode(old_val: u8, new_val: u8, vol: &mut u8, dir: &mut bool) {
+    let old_period = old_val & 0x07; // 0 ⇒ treated as 8
+    let old_direction = (old_val & 0x08) != 0; // true = increase
+    let new_direction = (new_val & 0x08) != 0;
+
+    // -------- primary quirk --------
+    if old_period == 0 {
+        // envelope period was “0” (==8) *and* still ticking ⇒ +1
+        *vol = (*vol + 1) & 0x0F;
+    } else if !old_direction {
+        // old envelope was in *decrease* mode ⇒ +2
+        *vol = (*vol + 2) & 0x0F;
+    }
+
+    // -------- mode-flip quirk --------
+    if new_direction != old_direction {
+        *vol = (16 - *vol) & 0x0F;
+    }
+
+    // Only the low nibble survives
+    *vol &= 0x0F;
+
+    // Finally write back the new direction so the caller
+    // doesn’t have to do it twice.
+    *dir = new_direction;
+}
+
 pub async fn apu() {
     // One PCM sample corresponds to this many CPU T-cycles at 48 kHz.
     const STEP: usize = CYCLES_PER_SAMPLE as usize; // 4 194 304 / 48 000 ≃ 87
@@ -739,8 +767,24 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.ch1.length_timer = 64 - (value & 0x3F);
         }
         NR12_REGISTER => {
+            /* ── zombie-mode quirk ───────────────────────────────────────── */
+            let old = (apu_state.ch1.initial_volume << 4)
+                | (if apu_state.ch1.envelope_direction {
+                    0x08
+                } else {
+                    0
+                })
+                | apu_state.ch1.envelope_pace;
+
+            apply_zombie_mode(
+                old,
+                value,
+                &mut apu_state.ch1.volume,
+                &mut apu_state.ch1.envelope_direction,
+            );
+
+            /* ── normal register write ───────────────────────────────────── */
             apu_state.ch1.initial_volume = (value >> 4) & 0x0F;
-            apu_state.ch1.envelope_direction = (value & 0x08) != 0;
             apu_state.ch1.envelope_pace = value & 0x07;
             apu_state.ch1.update_dac(value);
         }
@@ -790,8 +834,22 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.ch2.length_timer = 64 - (value & 0x3F);
         }
         NR22_REGISTER => {
+            let old = (apu_state.ch2.initial_volume << 4)
+                | (if apu_state.ch2.envelope_direction {
+                    0x08
+                } else {
+                    0
+                })
+                | apu_state.ch2.envelope_pace;
+
+            apply_zombie_mode(
+                old,
+                value,
+                &mut apu_state.ch2.volume,
+                &mut apu_state.ch2.envelope_direction,
+            );
+
             apu_state.ch2.initial_volume = (value >> 4) & 0x0F;
-            apu_state.ch2.envelope_direction = (value & 0x08) != 0;
             apu_state.ch2.envelope_pace = value & 0x07;
             apu_state.ch2.update_dac(value);
         }
@@ -885,6 +943,16 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.ch4.set_length_timer(value);
         }
         NR42_REGISTER => {
+            let old = apu_state.ch4.read_volume_envelope();
+
+            apply_zombie_mode(
+                old,
+                value,
+                &mut apu_state.ch4.volume,
+                &mut apu_state.ch4.envelope_direction,
+            );
+
+            // This helper fills in initial_volume, envelope_pace and DAC status
             apu_state.ch4.set_volume_envelope(value);
         }
         NR43_REGISTER => {
