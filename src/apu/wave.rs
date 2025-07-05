@@ -19,6 +19,8 @@ pub struct WaveChannel {
     pub wave_ram: [u8; 16], // 16 bytes of wave RAM (FF30-FF3F)
     pub sample_buffer: u8,  // Last read sample (continuously emitted)
     pub sample_index: u8,   // Current position in 32-sample waveform (0-31)
+
+    ram_busy: u8,
 }
 
 impl WaveChannel {
@@ -34,6 +36,7 @@ impl WaveChannel {
             wave_ram: [0; 16],
             sample_buffer: 0, // This buffer is cleared when APU is turned on
             sample_index: 0,
+            ram_busy: 0,
         }
     }
 
@@ -64,6 +67,11 @@ impl WaveChannel {
     }
 
     pub fn clock_period(&mut self) {
+        // count down the busy window each T-cycle
+        if self.ram_busy > 0 {
+            self.ram_busy -= 1;
+        }
+
         if !self.enabled {
             return;
         }
@@ -82,6 +90,7 @@ impl WaveChannel {
             if self.enabled {
                 // Only read if enabled to prevent RAM corruption issues
                 self.sample_buffer = self.read_sample();
+                self.ram_busy = 2; // block CPU for the next 2 cycles
             }
         }
     }
@@ -123,31 +132,44 @@ impl WaveChannel {
     }
 
     pub fn read_wave_ram(&self, address: u16) -> u8 {
-        // Reading wave RAM is only safe when the channel is disabled
-        if self.enabled {
-            let byte_index = (self.sample_index / 2) as usize;
-            if (address - 0xFF30) as usize == byte_index {
-                return self.wave_ram[byte_index];
-            }
-            return 0xFF; // Reading from other wave RAM locations while active is undefined
+        // When channel is active, access is only allowed if the APU just read a sample.
+        if self.enabled && self.ram_busy > 0 {
+            return 0xFF; // Blocked access reads FF
         }
 
-        let index = (address - 0xFF30) as usize;
-        if index < 16 {
-            self.wave_ram[index]
+        // If channel is disabled OR it's the right time, allow access.
+        // The reference also redirects reads to the current playing sample's byte.
+        let read_index = if self.enabled {
+            // If enabled, hardware redirects the read to the current sample byte
+            (self.sample_index / 2) as usize
+        } else {
+            (address - 0xFF30) as usize
+        };
+
+        if read_index < 16 {
+            self.wave_ram[read_index]
         } else {
             0xFF
         }
     }
 
     pub fn write_wave_ram(&mut self, address: u16, value: u8) {
-        // Writing to wave RAM is only safe when the channel is disabled
-        if self.enabled {
-            return;
+        // When channel is active, access is only allowed if the APU just read a sample.
+        if self.enabled && self.ram_busy > 0 {
+            return; // Blocked writes are ignored
         }
-        let index = (address - 0xFF30) as usize;
-        if index < 16 {
-            self.wave_ram[index] = value;
+
+        // If channel is disabled OR it's the right time, allow access.
+        // The reference redirects writes in the same way as reads.
+        let write_index = if self.enabled {
+            // If enabled, hardware redirects the write to the current sample byte
+            (self.sample_index / 2) as usize
+        } else {
+            (address - 0xFF30) as usize
+        };
+
+        if write_index < 16 {
+            self.wave_ram[write_index] = value;
         }
     }
 
@@ -193,7 +215,7 @@ impl WaveChannel {
     // Wave RAM corruption when triggering while channel is reading
     fn corrupt_wave_ram(&mut self) {
         let byte_index = (self.sample_index / 2) as usize;
-        
+
         if byte_index < 4 {
             // If reading one of the first four bytes, only first byte is rewritten
             let byte_value = self.wave_ram[byte_index];

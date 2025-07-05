@@ -540,7 +540,7 @@ impl ApuState {
             // sample = self.audio_filter.smooth_sample(sample);
 
             // 2.b high-pass filters (DMG hardware)
-            // sample = self.hp_filter.step(sample);
+            sample = self.hp_filter.step(sample);
 
             // 2.c hard-clamp – keeps SDL happy
             sample = sample.clamp(-1.0, 1.0);
@@ -649,7 +649,7 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
                 | apu_state.ch1.sweep_step
         }
         NR11_REGISTER => {
-            apu_state.ch1.duty << 6 // Length timer is write-only
+            0xC0 | (apu_state.ch1.duty << 6) // Length timer is write-only
         }
         NR12_REGISTER => {
             (apu_state.ch1.initial_volume << 4)
@@ -670,7 +670,7 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
         }
 
         NR21_REGISTER => {
-            apu_state.ch2.duty << 6 // Length timer is write-only
+            0xC0 | (apu_state.ch2.duty << 6) // Length timer is write-only
         }
         NR22_REGISTER => {
             (apu_state.ch2.initial_volume << 4)
@@ -743,8 +743,13 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
 }
 
 pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
+    // Special handling for NR52, as it can be written even when APU is off.
     if !apu_state.master_enable && address != NR52_REGISTER {
-        return; // Ignore writes when APU is disabled
+        if address >= WAVE_RAM_START && address <= WAVE_RAM_END {
+            // DMG allows writing to Wave RAM when APU is off.
+            apu_state.ch3.write_wave_ram(address, value);
+        }
+        return; // Ignore writes to other registers when APU is disabled
     }
 
     match address {
@@ -794,35 +799,38 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
         NR14_REGISTER => {
             let old_length_enabled = apu_state.ch1.length_enabled;
             let trigger = (value & 0x80) != 0;
+
+            // update control bits
             apu_state.ch1.length_enabled = (value & 0x40) != 0;
             apu_state.ch1.period = (apu_state.ch1.period & 0x00FF) | (((value & 0x07) as u16) << 8);
 
-            // Extra length clocking
+            // ── extra length clocking (handles “length == 1” quirk) ──
             if !apu_state.is_length_clock_step()
                 && !old_length_enabled
                 && apu_state.ch1.length_enabled
             {
-                if apu_state.ch1.length_timer > 0 && !trigger {
+                if apu_state.ch1.length_timer > 0 {
                     apu_state.ch1.length_timer -= 1;
-                    if apu_state.ch1.length_timer == 0 {
+                    if apu_state.ch1.length_timer == 0 && !trigger {
                         apu_state.ch1.enabled = false;
                     }
                 }
             }
 
+            // ── trigger processing ───────────────────────────────────
             if trigger {
-                // Check for length = 63 instead of 64
-                let should_adjust_length = !apu_state.is_length_clock_step()
+                // refresh length to 64 → 63 when it wrapped to 0
+                let needs_adjust = !apu_state.is_length_clock_step()
                     && apu_state.ch1.length_enabled
                     && apu_state.ch1.length_timer == 0;
 
                 apu_state.ch1.trigger(true); // CH1 has sweep
 
-                if should_adjust_length && apu_state.ch1.length_timer == 64 {
+                if needs_adjust && apu_state.ch1.length_timer == 64 {
                     apu_state.ch1.length_timer = 63;
                 }
 
-                // Check for envelope timer +1
+                // envelope +1 if frame sequencer will tick envelope next
                 if apu_state.is_envelope_clock_step() && apu_state.ch1.envelope_pace != 0 {
                     apu_state.ch1.envelope_timer = apu_state.ch1.envelope_timer.saturating_add(1);
                 }
@@ -859,35 +867,34 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
         NR24_REGISTER => {
             let old_length_enabled = apu_state.ch2.length_enabled;
             let trigger = (value & 0x80) != 0;
+
             apu_state.ch2.length_enabled = (value & 0x40) != 0;
             apu_state.ch2.period = (apu_state.ch2.period & 0x00FF) | (((value & 0x07) as u16) << 8);
 
-            // Extra length clocking
+            // extra length clock (handles “length==1” quirk)
             if !apu_state.is_length_clock_step()
                 && !old_length_enabled
                 && apu_state.ch2.length_enabled
             {
-                if apu_state.ch2.length_timer > 0 && !trigger {
+                if apu_state.ch2.length_timer > 0 {
                     apu_state.ch2.length_timer -= 1;
-                    if apu_state.ch2.length_timer == 0 {
+                    if apu_state.ch2.length_timer == 0 && !trigger {
                         apu_state.ch2.enabled = false;
                     }
                 }
             }
 
             if trigger {
-                // Check for length = 63 instead of 64
-                let should_adjust_length = !apu_state.is_length_clock_step()
+                let needs_adjust = !apu_state.is_length_clock_step()
                     && apu_state.ch2.length_enabled
                     && apu_state.ch2.length_timer == 0;
 
                 apu_state.ch2.trigger(false); // CH2 has no sweep
 
-                if should_adjust_length && apu_state.ch2.length_timer == 64 {
+                if needs_adjust && apu_state.ch2.length_timer == 64 {
                     apu_state.ch2.length_timer = 63;
                 }
 
-                // Check for envelope timer +1
                 if apu_state.is_envelope_clock_step() && apu_state.ch2.envelope_pace != 0 {
                     apu_state.ch2.envelope_timer = apu_state.ch2.envelope_timer.saturating_add(1);
                 }
@@ -909,31 +916,30 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
         NR34_REGISTER => {
             let old_length_enabled = apu_state.ch3.length_enabled;
             let trigger = (value & 0x80) != 0;
+
             apu_state.ch3.set_length_enabled(value);
             apu_state.ch3.set_period_high(value);
 
-            // Extra length clocking
             if !apu_state.is_length_clock_step()
                 && !old_length_enabled
                 && apu_state.ch3.length_enabled
             {
-                if apu_state.ch3.length_timer > 0 && !trigger {
+                if apu_state.ch3.length_timer > 0 {
                     apu_state.ch3.length_timer -= 1;
-                    if apu_state.ch3.length_timer == 0 {
+                    if apu_state.ch3.length_timer == 0 && !trigger {
                         apu_state.ch3.enabled = false;
                     }
                 }
             }
 
             if trigger {
-                // Check for length = 255 instead of 256 (wave channel max)
-                let should_adjust_length = !apu_state.is_length_clock_step()
+                let needs_adjust = !apu_state.is_length_clock_step()
                     && apu_state.ch3.length_enabled
                     && apu_state.ch3.length_timer == 0;
 
                 apu_state.ch3.trigger();
 
-                if should_adjust_length && apu_state.ch3.length_timer == 256 {
+                if needs_adjust && apu_state.ch3.length_timer == 256 {
                     apu_state.ch3.length_timer = 255;
                 }
             }
@@ -962,33 +968,30 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             let old_length_enabled = apu_state.ch4.length_enabled;
             let trigger = (value & 0x80) != 0;
 
-            // Extra length clocking - do this before set_control
             if !apu_state.is_length_clock_step() && !old_length_enabled && (value & 0x40) != 0 {
-                if apu_state.ch4.length_timer > 0 && !trigger {
+                if apu_state.ch4.length_timer > 0 {
                     apu_state.ch4.length_timer -= 1;
-                    if apu_state.ch4.length_timer == 0 {
+                    if apu_state.ch4.length_timer == 0 && !trigger {
                         apu_state.ch4.enabled = false;
                     }
                 }
             }
 
-            // Check for length = 63 instead of 64
-            let should_adjust_length = trigger
+            let needs_adjust_len = trigger
                 && !apu_state.is_length_clock_step()
                 && (value & 0x40) != 0
                 && apu_state.ch4.length_timer == 0;
 
-            // Check for envelope timer +1
-            let should_adjust_envelope =
+            let needs_adjust_env =
                 trigger && apu_state.is_envelope_clock_step() && apu_state.ch4.envelope_pace != 0;
 
             apu_state.ch4.set_control(value);
 
-            if should_adjust_length && apu_state.ch4.length_timer == 64 {
+            if needs_adjust_len && apu_state.ch4.length_timer == 64 {
                 apu_state.ch4.length_timer = 63;
             }
 
-            if should_adjust_envelope {
+            if needs_adjust_env {
                 apu_state.ch4.envelope_timer = apu_state.ch4.envelope_timer.saturating_add(1);
             }
         }
@@ -1011,17 +1014,34 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
         }
         NR52_REGISTER => {
             let old_enable = apu_state.master_enable;
-            apu_state.master_enable = (value & 0x80) != 0;
+            let new_enable = (value & 0x80) != 0;
 
-            if !apu_state.master_enable {
-                // APU turned off - reset all registers, but keep master_enable state
-                let master_enable = apu_state.master_enable;
+            // On DMG, length timers are not reset by an APU power cycle.
+            // We must capture them before any state is modified.
+            let old_len_ch1 = apu_state.ch1.length_timer;
+            let old_len_ch2 = apu_state.ch2.length_timer;
+            let old_len_ch3 = apu_state.ch3.length_timer;
+            let old_len_ch4 = apu_state.ch4.length_timer;
+
+            if !new_enable {
+                // APU is being turned OFF. Reset all registers.
                 *apu_state = ApuState::new();
-                apu_state.master_enable = master_enable;
-            } else if !old_enable {
-                // APU turned ON - reset frame sequencer
-                apu_state.frame_sequencer_step = 0;
-                apu_state.frame_sequencer_timer = 8192; // Schedule first tick
+                apu_state.master_enable = false;
+            } else {
+                // APU is being turned ON.
+                apu_state.master_enable = true;
+                if !old_enable {
+                    // This is the moment the APU transitions from OFF to ON.
+                    // Reset the frame sequencer.
+                    apu_state.frame_sequencer_step = 0;
+                    apu_state.frame_sequencer_timer = 8192; // Schedule first tick
+
+                    // Restore the length timers from before the power cycle.
+                    apu_state.ch1.length_timer = old_len_ch1;
+                    apu_state.ch2.length_timer = old_len_ch2;
+                    apu_state.ch3.length_timer = old_len_ch3;
+                    apu_state.ch4.length_timer = old_len_ch4;
+                }
             }
         }
 

@@ -1,7 +1,5 @@
 // src/apu/noise.rs
 
-use super::SQUARE_WAVE_TABLES;
-
 // Corrected noise channel divider values
 const NOISE_DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
@@ -64,15 +62,18 @@ impl NoiseChannel {
         self.period_timer = self.calculate_period();
 
         // Reset envelope
-        self.envelope_timer = if self.envelope_pace == 0 { 8 } else { self.envelope_pace };
+        self.envelope_timer = if self.envelope_pace == 0 {
+            8
+        } else {
+            self.envelope_pace
+        };
         self.volume = self.initial_volume;
 
-        // Reset LFSR to all 1s
-        self.lfsr = 0xFFFF;
+        self.lfsr = 0x7FFF
     }
 
     fn calculate_period(&self) -> u32 {
-        NOISE_DIVISORS[self.clock_divider as usize] << self.clock_shift
+        (NOISE_DIVISORS[self.clock_divider as usize] << self.clock_shift) * 16
     }
 
     pub fn clock_period(&mut self) {
@@ -120,7 +121,11 @@ impl NoiseChannel {
         }
 
         if self.envelope_timer == 0 {
-            self.envelope_timer = if self.envelope_pace == 0 { 8 } else { self.envelope_pace };
+            self.envelope_timer = if self.envelope_pace == 0 {
+                8
+            } else {
+                self.envelope_pace
+            };
 
             if self.envelope_direction && self.volume < 15 {
                 self.volume += 1;
@@ -144,17 +149,11 @@ impl NoiseChannel {
             return 0.0;
         }
 
-        // Output is based on the inverted LSB of the LFSR.
-        // If bit 0 is 0, output is volume. If bit 0 is 1, output is 0.
-        if (self.lfsr & 0x01) == 0 {
-            // We model the DAC output similarly to the square channels.
-            // A high signal corresponds to the positive value in the square wave table.
-            SQUARE_WAVE_TABLES[0][self.volume as usize][7] // [7] is an arbitrary high sample
-        } else {
-            // A low signal is 0. After DAC, this would be a different voltage,
-            // but we can model it as the negative value for a bipolar wave.
-            SQUARE_WAVE_TABLES[0][self.volume as usize][0] // [0] is an arbitrary low sample
-        }
+        // 4-bit DAC: 0 → +1.0 , 15 → –1.0  (inverted)
+        let high = 1.0 - (self.volume as f32 / 7.5);
+        let low = 1.0; // digital 0 maps to analogue +1 V
+
+        if (self.lfsr & 1) == 0 { high } else { low }
     }
 
     pub fn update_dac(&mut self, nr42_value: u8) {
