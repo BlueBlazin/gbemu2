@@ -279,6 +279,12 @@ pub struct HpFilter {
     x_prev: f32, // previous input sample  (x[n-1])
 }
 
+impl Default for HpFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HpFilter {
     /// Create a new filter with zeroed state.
     pub fn new() -> Self {
@@ -343,6 +349,12 @@ pub struct ApuState {
     pub sample_count: u32,
 
     pub hp_filter: HpFilter,
+}
+
+impl Default for ApuState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ApuState {
@@ -711,7 +723,7 @@ pub fn read_apu_register(address: u16, apu_state: &ApuState) -> u8 {
 pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
     // Special handling for NR52, as it can be written even when APU is off.
     if !apu_state.master_enable && address != NR52_REGISTER {
-        if address >= WAVE_RAM_START && address <= WAVE_RAM_END {
+        if (WAVE_RAM_START..=WAVE_RAM_END).contains(&address) {
             // DMG allows writing to Wave RAM when APU is off.
             apu_state.ch3.write_wave_ram(address, value);
         }
@@ -772,14 +784,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
 
             // ── extra length clocking (handles “length == 1” quirk) ──
             if !apu_state.is_length_clock_step()
-                && !old_length_enabled
-                && apu_state.ch1.length_enabled
-            {
-                if apu_state.ch1.length_timer > 0 {
-                    apu_state.ch1.length_timer -= 1;
-                    if apu_state.ch1.length_timer == 0 && !trigger {
-                        apu_state.ch1.enabled = false;
-                    }
+                && !old_length_enabled && apu_state.ch1.length_enabled && apu_state.ch1.length_timer > 0 {
+                apu_state.ch1.length_timer -= 1;
+                if apu_state.ch1.length_timer == 0 && !trigger {
+                    apu_state.ch1.enabled = false;
                 }
             }
 
@@ -839,14 +847,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
 
             // extra length clock (handles “length==1” quirk)
             if !apu_state.is_length_clock_step()
-                && !old_length_enabled
-                && apu_state.ch2.length_enabled
-            {
-                if apu_state.ch2.length_timer > 0 {
-                    apu_state.ch2.length_timer -= 1;
-                    if apu_state.ch2.length_timer == 0 && !trigger {
-                        apu_state.ch2.enabled = false;
-                    }
+                && !old_length_enabled && apu_state.ch2.length_enabled && apu_state.ch2.length_timer > 0 {
+                apu_state.ch2.length_timer -= 1;
+                if apu_state.ch2.length_timer == 0 && !trigger {
+                    apu_state.ch2.enabled = false;
                 }
             }
 
@@ -887,14 +891,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             apu_state.ch3.set_period_high(value);
 
             if !apu_state.is_length_clock_step()
-                && !old_length_enabled
-                && apu_state.ch3.length_enabled
-            {
-                if apu_state.ch3.length_timer > 0 {
-                    apu_state.ch3.length_timer -= 1;
-                    if apu_state.ch3.length_timer == 0 && !trigger {
-                        apu_state.ch3.enabled = false;
-                    }
+                && !old_length_enabled && apu_state.ch3.length_enabled && apu_state.ch3.length_timer > 0 {
+                apu_state.ch3.length_timer -= 1;
+                if apu_state.ch3.length_timer == 0 && !trigger {
+                    apu_state.ch3.enabled = false;
                 }
             }
 
@@ -934,12 +934,10 @@ pub fn write_apu_register(address: u16, value: u8, apu_state: &mut ApuState) {
             let old_length_enabled = apu_state.ch4.length_enabled;
             let trigger = (value & 0x80) != 0;
 
-            if !apu_state.is_length_clock_step() && !old_length_enabled && (value & 0x40) != 0 {
-                if apu_state.ch4.length_timer > 0 {
-                    apu_state.ch4.length_timer -= 1;
-                    if apu_state.ch4.length_timer == 0 && !trigger {
-                        apu_state.ch4.enabled = false;
-                    }
+            if !apu_state.is_length_clock_step() && !old_length_enabled && (value & 0x40) != 0 && apu_state.ch4.length_timer > 0 {
+                apu_state.ch4.length_timer -= 1;
+                if apu_state.ch4.length_timer == 0 && !trigger {
+                    apu_state.ch4.enabled = false;
                 }
             }
 

@@ -275,7 +275,7 @@ impl TexturePool {
         // Add to size group
         self.size_groups
             .entry(key)
-            .or_insert_with(VecDeque::new)
+            .or_default()
             .push_back(texture_id);
 
         // Update LRU queue

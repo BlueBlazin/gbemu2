@@ -23,6 +23,12 @@ pub struct WaveChannel {
     ram_busy: u8,
 }
 
+impl Default for WaveChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WaveChannel {
     pub fn new() -> Self {
         Self {

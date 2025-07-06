@@ -11,6 +11,12 @@ pub struct OamEntry {
     pub attributes: u8, // Attributes/flags
 }
 
+impl Default for OamEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OamEntry {
     pub fn new() -> Self {
         Self {
@@ -127,6 +133,12 @@ pub struct PpuState {
     pub window_line: u8, // Internal window line counter
     // STAT interrupt line state tracking
     pub stat_line: bool, // Current state of STAT interrupt line
+}
+
+impl Default for PpuState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PpuState {
@@ -787,7 +799,7 @@ async fn oam_scan(render_state: &mut PpuRenderState) {
             continue; // Can't display more than 10 objects per scanline
         }
 
-        let obj = with_state(|state| state.ppu.oam[i].clone());
+        let obj = with_state(|state| state.ppu.oam[i]);
 
         // Check if object is on this scanline
         let obj_y = obj.y as i16 - 16;
@@ -926,7 +938,7 @@ fn get_tile_map(render_state: &mut PpuRenderState) {
             let tile_y = (render_state.fetcher.window_line / 8) as u16;
             let tile_addr = map_base + tile_y * 32 + tile_x;
 
-            if tile_addr >= 0x9800 && tile_addr < 0x9C00 {
+            if (0x9800..0x9C00).contains(&tile_addr) {
                 state.ppu.bg_tile_map_0[(tile_addr - 0x9800) as usize]
             } else {
                 state.ppu.bg_tile_map_1[(tile_addr - 0x9C00) as usize]
@@ -938,7 +950,7 @@ fn get_tile_map(render_state: &mut PpuRenderState) {
             let tile_y = state.ppu.ly.wrapping_add(state.ppu.scy) / 8;
             let tile_addr = map_base + (tile_y as u16 * 32) + tile_x as u16;
 
-            if tile_addr >= 0x9800 && tile_addr < 0x9C00 {
+            if (0x9800..0x9C00).contains(&tile_addr) {
                 state.ppu.bg_tile_map_0[(tile_addr - 0x9800) as usize]
             } else {
                 state.ppu.bg_tile_map_1[(tile_addr - 0x9C00) as usize]

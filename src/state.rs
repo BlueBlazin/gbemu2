@@ -407,7 +407,7 @@ impl EmulatorState {
                 crate::apu::write_apu_register(address, value, &mut self.apu)
             }
             _ => {
-                if address >= 0xFF00 && address <= 0xFF7F {
+                if (0xFF00..=0xFF7F).contains(&address) {
                     self.mmu.io_registers[(address - 0xFF00) as usize] = value;
                 }
             }

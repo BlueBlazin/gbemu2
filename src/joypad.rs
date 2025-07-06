@@ -30,6 +30,12 @@ pub struct JoypadState {
     pub previous_p1_lower: u8,
 }
 
+impl Default for JoypadState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JoypadState {
     pub fn new() -> Self {
         Self {

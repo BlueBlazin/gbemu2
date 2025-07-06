@@ -37,6 +37,12 @@ pub struct SquareChannel {
     pub sweep_calculation_made: bool, // Track if calculation was made in subtraction mode
 }
 
+impl Default for SquareChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SquareChannel {
     pub fn new() -> Self {
         Self {
@@ -149,12 +155,10 @@ impl SquareChannel {
                 self.sweep_pace
             };
 
-            if self.sweep_enabled && self.sweep_pace != 0 {
-                if self.calculate_sweep_frequency() {
-                    // Calculate again immediately but don't write back - check for overflow again
-                    if !self.calculate_sweep_frequency_no_writeback() {
-                        self.enabled = false;
-                    }
+            if self.sweep_enabled && self.sweep_pace != 0 && self.calculate_sweep_frequency() {
+                // Calculate again immediately but don't write back - check for overflow again
+                if !self.calculate_sweep_frequency_no_writeback() {
+                    self.enabled = false;
                 }
             }
         }

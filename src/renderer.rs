@@ -655,7 +655,7 @@ impl Renderer {
 
     /// Force cleanup of unused textures for all windows
     pub fn cleanup_unused_textures(&mut self) {
-        for (_, window) in &mut self.windows {
+        for window in self.windows.values_mut() {
             window.texture_pool.force_cleanup();
         }
     }
@@ -930,8 +930,8 @@ impl Renderer {
                 Some(Rect::new(
                     0,
                     0,
-                    TILEMAP_PIXEL_WIDTH * 1,
-                    TILEMAP_PIXEL_HEIGHT * 1,
+                    TILEMAP_PIXEL_WIDTH,
+                    TILEMAP_PIXEL_HEIGHT,
                 )),
             )
             .map_err(|e| e.to_string())?;
@@ -1300,7 +1300,7 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         // Release all textures back to their respective pools
-        for (_, window) in &mut self.windows {
+        for window in self.windows.values_mut() {
             if let Some(texture_id) = window.texture_id {
                 window.texture_pool.release_texture(texture_id);
             }

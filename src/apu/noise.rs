@@ -28,6 +28,12 @@ pub struct NoiseChannel {
     pub length_enabled: bool, // Length timer enable
 }
 
+impl Default for NoiseChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NoiseChannel {
     pub fn new() -> Self {
         Self {
