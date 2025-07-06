@@ -1,5 +1,3 @@
-// src/apu/noise.rs
-
 // Corrected noise channel divider values
 const NOISE_DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 

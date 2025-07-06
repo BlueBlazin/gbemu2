@@ -6,6 +6,12 @@ use crate::mmu::MMU;
 use crate::ppu::PpuState;
 use crate::timer::TimerState;
 
+// I/O register addresses
+pub const P1_REGISTER: u16 = 0xFF00; // Joypad
+pub const IF_REGISTER: u16 = 0xFF0F; // Interrupt Flag
+pub const IE_REGISTER: u16 = 0xFFFF; // Interrupt Enable
+pub const DMA_REGISTER: u16 = 0xFF46; // OAM DMA Transfer
+
 /// Tracks which debug windows need to be re-rendered
 #[derive(Debug, Clone)]
 pub struct RenderDirtyFlags {
@@ -307,20 +313,20 @@ impl EmulatorState {
     // Internal I/O register handling
     fn read_io_register(&self, address: u16) -> u8 {
         match address {
-            crate::io::P1_REGISTER => {
+            P1_REGISTER => {
                 // Calculate P1 value based on current joypad state and selection
                 let p1_select = self.mmu.io_registers[0x00];
                 self.joypad.calculate_p1(p1_select) | 0xC0 // Bits 6-7 always 1
             }
-            crate::io::IF_REGISTER => self.interrupts.if_reg | 0xE0,
-            crate::io::IE_REGISTER => self.interrupts.ie,
+            IF_REGISTER => self.interrupts.if_reg | 0xE0,
+            IE_REGISTER => self.interrupts.ie,
             crate::timer::DIV_REGISTER
             | crate::timer::TIMA_REGISTER
             | crate::timer::TMA_REGISTER
             | crate::timer::TAC_REGISTER => {
                 crate::timer::read_timer_register_direct(address, &self.timer)
             }
-            crate::io::DMA_REGISTER => self.dma.last_written_value,
+            DMA_REGISTER => self.dma.last_written_value,
             // PPU registers
             crate::ppu::LCDC_REGISTER => self.ppu.lcdc,
             crate::ppu::STAT_REGISTER => self.ppu.stat | 0x80, // Bit 7 always reads as 1
@@ -343,20 +349,20 @@ impl EmulatorState {
 
     fn write_io_register(&mut self, address: u16, value: u8) {
         match address {
-            crate::io::P1_REGISTER => {
+            P1_REGISTER => {
                 // Only bits 4-5 are writable for P1 register (selection bits)
                 // Store the selection bits, the lower nibble will be calculated on read
                 self.mmu.io_registers[0x00] = (value & 0x30) | 0xC0; // Keep bits 6-7 high, bits 0-3 are calculated on read
             }
-            crate::io::IF_REGISTER => self.interrupts.if_reg = (value & 0x1F) | 0xE0,
-            crate::io::IE_REGISTER => self.interrupts.ie = value,
+            IF_REGISTER => self.interrupts.if_reg = (value & 0x1F) | 0xE0,
+            IE_REGISTER => self.interrupts.ie = value,
             crate::timer::DIV_REGISTER
             | crate::timer::TIMA_REGISTER
             | crate::timer::TMA_REGISTER
             | crate::timer::TAC_REGISTER => {
                 crate::timer::write_timer_register_direct(address, value, &mut self.timer);
             }
-            crate::io::DMA_REGISTER => self.dma.request_transfer(value),
+            DMA_REGISTER => self.dma.request_transfer(value),
             // PPU registers
             crate::ppu::LCDC_REGISTER => self.ppu.lcdc = value,
             crate::ppu::STAT_REGISTER => {

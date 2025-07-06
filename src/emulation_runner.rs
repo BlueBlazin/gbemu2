@@ -69,7 +69,7 @@ impl EmulationRunner {
             let frame_cycles_start = Instant::now();
             let cycles_executed = self.run_frame_cycles(&mut stats)?;
             let frame_cycles_duration = frame_cycles_start.elapsed();
-            
+
             // Track timing for optimization measurement
             frame_time_sum += frame_cycles_duration;
             frame_time_count += 1;
@@ -177,7 +177,7 @@ impl EmulationRunner {
                     // Calculate how many cycles we overshot or undershot by
                     let overshoot = total_cycles_this_frame as isize - CYCLES_PER_FRAME as isize;
                     self.cycle_correction = overshoot;
-                    
+
                     // We've executed all requested cycles
                     return Ok(total_cycles_this_frame);
                 }
@@ -186,7 +186,10 @@ impl EmulationRunner {
     }
 
     fn print_debug_info(&self, frame_cycles: usize) {
-        println!("Debug: Frame cycles: {} (correction: {})", frame_cycles, self.cycle_correction);
+        println!(
+            "Debug: Frame cycles: {} (correction: {})",
+            frame_cycles, self.cycle_correction
+        );
 
         // Print PPU state
         let (ly, mode, lcdc) =

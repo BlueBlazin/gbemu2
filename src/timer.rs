@@ -14,9 +14,6 @@ const TIMER_FREQ_262144: u16 = 4; // 01: 262144 Hz
 const TIMER_FREQ_65536: u16 = 16; // 10: 65536 Hz
 const TIMER_FREQ_16384: u16 = 64; // 11: 16384 Hz
 
-// DIV frequency (16384 Hz = every 256 M-cycles)
-const DIV_FREQ: u16 = 256;
-
 #[derive(Debug, Clone)]
 pub struct TimerState {
     // Registers
@@ -222,38 +219,6 @@ async fn step_timer() {
     }
 }
 
-// I/O register handlers for timer registers
-pub fn read_timer_register(address: u16) -> u8 {
-    with_state(|state| {
-        match address {
-            DIV_REGISTER => state.timer.div,
-            TIMA_REGISTER => {
-                if state.timer.overflow_pending {
-                    // During overflow cycle, TIMA reads as 0x00
-                    0x00
-                } else {
-                    state.timer.tima
-                }
-            }
-            TMA_REGISTER => state.timer.tma,
-            TAC_REGISTER => state.timer.tac | 0xF8, // Upper bits read as 1
-            _ => 0xFF,                              // Invalid register
-        }
-    })
-}
-
-pub fn write_timer_register(address: u16, value: u8) {
-    with_state_mut(|state| {
-        match address {
-            DIV_REGISTER => state.timer.write_div(value),
-            TIMA_REGISTER => state.timer.write_tima(value),
-            TMA_REGISTER => state.timer.write_tma(value),
-            TAC_REGISTER => state.timer.write_tac(value),
-            _ => {} // Invalid register, ignore
-        }
-    });
-}
-
 // Direct access versions for avoiding nested borrows
 pub fn read_timer_register_direct(address: u16, timer: &TimerState) -> u8 {
     match address {
@@ -291,59 +256,6 @@ pub fn enter_stop_mode() {
     with_state_mut(|state| {
         state.timer.enter_stop_mode();
     });
-}
-
-pub fn exit_stop_mode() {
-    with_state_mut(|state| {
-        state.timer.exit_stop_mode();
-    });
-
-    // In a real Game Boy, STOP mode is typically exited by:
-    // - Joypad input
-    // - Serial communication interrupt
-    // This function provides the interface for those systems to wake up the timer
-}
-
-// Get current timer state for debugging and inspection
-pub fn get_timer_state() -> (u8, u8, u8, u8) {
-    with_state(|state| {
-        (
-            state.timer.div,
-            state.timer.tima,
-            state.timer.tma,
-            state.timer.tac,
-        )
-    })
-}
-
-// Additional debugging helper - get full timer state including internals
-pub fn get_full_timer_state() -> (u8, u8, u8, u8, u16, bool, u8, bool) {
-    with_state(|state| {
-        (
-            state.timer.div,
-            state.timer.tima,
-            state.timer.tma,
-            state.timer.tac,
-            state.timer.system_counter,
-            state.timer.overflow_pending,
-            state.timer.overflow_tma_value,
-            state.timer.stop_mode,
-        )
-    })
-}
-
-// Public interface for external systems that might need to wake from STOP mode
-// (such as joypad input handling when implemented)
-pub fn wake_from_stop_if_needed() {
-    // In a full Game Boy emulator, this would be called by:
-    // - Joypad input system
-    // - Serial communication interrupt
-    // - Other external wake-up sources
-
-    let is_stopped = with_state(|state| state.timer.stop_mode);
-    if is_stopped {
-        exit_stop_mode();
-    }
 }
 
 #[cfg(test)]

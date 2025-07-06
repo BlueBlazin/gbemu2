@@ -270,9 +270,6 @@ const CYCLES_PER_SAMPLE: u32 = CPU_FREQUENCY / SAMPLE_RATE; // ~87 cycles per sa
 // Audio buffer constants
 const BUFFER_SIZE: usize = 1024; // Target buffer size in samples
 
-// Audio filtering constants
-const SMOOTHING_FACTOR: f32 = 0.95; // Low-pass filter coefficient (0.0 = no smoothing, 1.0 = no change)
-
 // High pass filter alpha
 const ALPHA: f32 = 0.995;
 
@@ -311,32 +308,6 @@ impl HpFilter {
     }
 }
 
-// Simple audio filter for anti-aliasing and smoothing
-#[derive(Debug, Clone)]
-pub struct AudioFilter {
-    last_sample: f32,
-    smoothing_factor: f32,
-}
-
-impl AudioFilter {
-    fn new() -> Self {
-        Self {
-            last_sample: 0.0,
-            smoothing_factor: SMOOTHING_FACTOR,
-        }
-    }
-
-    fn smooth_sample(&mut self, new_sample: f32) -> f32 {
-        self.last_sample =
-            self.last_sample * self.smoothing_factor + new_sample * (1.0 - self.smoothing_factor);
-        self.last_sample
-    }
-
-    fn reset(&mut self) {
-        self.last_sample = 0.0;
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ApuState {
     // Master control
@@ -370,7 +341,6 @@ pub struct ApuState {
     pub audio_buffer: Vec<f32>,
     pub sample_accumulator: f32,
     pub sample_count: u32,
-    pub audio_filter: AudioFilter,
 
     pub hp_filter: HpFilter,
 }
@@ -400,7 +370,6 @@ impl ApuState {
             audio_buffer: Vec::with_capacity(BUFFER_SIZE),
             sample_accumulator: 0.0,
             sample_count: 0,
-            audio_filter: AudioFilter::new(),
             hp_filter: HpFilter::new(),
         }
     }
@@ -535,9 +504,6 @@ impl ApuState {
         if self.sample_count >= CYCLES_PER_SAMPLE {
             // average the 87 CPU-rate samples
             let mut sample = self.sample_accumulator / self.sample_count as f32;
-
-            // 2.a low-pass anti-alias (simple leaky integrator)
-            // sample = self.audio_filter.smooth_sample(sample);
 
             // 2.b high-pass filters (DMG hardware)
             sample = self.hp_filter.step(sample);

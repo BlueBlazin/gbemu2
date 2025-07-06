@@ -109,7 +109,11 @@ impl JoypadState {
 
     /// Check for interrupt condition and trigger if needed
     /// This should be called from the main state update, not from within set_button
-    pub fn check_and_trigger_interrupt(&mut self, p1_select: u8, interrupt_state: &mut crate::interrupts::InterruptState) -> bool {
+    pub fn check_and_trigger_interrupt(
+        &mut self,
+        p1_select: u8,
+        interrupt_state: &mut crate::interrupts::InterruptState,
+    ) -> bool {
         // Calculate new P1 value
         let new_p1 = self.calculate_p1(p1_select);
         let new_lower = new_p1 & 0x0F;

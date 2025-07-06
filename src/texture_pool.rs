@@ -147,10 +147,7 @@ pub struct TexturePool {
 
 impl TexturePool {
     /// Create a new texture pool
-    pub fn new(
-        texture_creator: TextureCreator<WindowContext>,
-        config: TexturePoolConfig,
-    ) -> Self {
+    pub fn new(texture_creator: TextureCreator<WindowContext>, config: TexturePoolConfig) -> Self {
         Self {
             textures: HashMap::new(),
             size_groups: HashMap::new(),
@@ -208,10 +205,10 @@ impl TexturePool {
         if let Some(texture) = self.textures.get_mut(&texture_id) {
             texture.metadata.in_use = false;
             texture.metadata.last_used = Instant::now();
-            
+
             // Update LRU queue
             self.update_lru_queue(texture_id);
-            
+
             // Update statistics
             self.stats.textures_in_use = self.stats.textures_in_use.saturating_sub(1);
             self.stats.textures_available += 1;
@@ -221,7 +218,7 @@ impl TexturePool {
     /// Find a reusable texture with the given key
     fn find_reusable_texture(&mut self, key: TextureKey) -> Option<TextureId> {
         let size_group = self.size_groups.get_mut(&key)?;
-        
+
         // Find the first available texture in this size group
         while let Some(texture_id) = size_group.pop_front() {
             if let Some(texture) = self.textures.get(&texture_id) {
@@ -232,7 +229,7 @@ impl TexturePool {
                 }
             }
         }
-        
+
         None
     }
 
@@ -303,11 +300,11 @@ impl TexturePool {
             if !texture.metadata.in_use {
                 texture.metadata.in_use = true;
                 texture.metadata.last_used = Instant::now();
-                
+
                 // Update statistics
                 self.stats.textures_in_use += 1;
                 self.stats.textures_available = self.stats.textures_available.saturating_sub(1);
-                
+
                 // Update LRU queue
                 self.update_lru_queue(texture_id);
             }
@@ -317,10 +314,11 @@ impl TexturePool {
     /// Update the LRU queue for a texture
     fn update_lru_queue(&mut self, texture_id: TextureId) {
         let now = Instant::now();
-        
+
         // Remove existing entry
-        self.lru_queue.retain(|entry| entry.texture_id != texture_id);
-        
+        self.lru_queue
+            .retain(|entry| entry.texture_id != texture_id);
+
         // Add to back (most recently used)
         self.lru_queue.push_back(LruEntry {
             texture_id,
@@ -340,7 +338,7 @@ impl TexturePool {
 
         // Find textures to remove
         let mut to_remove = Vec::new();
-        
+
         for entry in &self.lru_queue {
             if let Some(texture) = self.textures.get(&entry.texture_id) {
                 if !texture.metadata.in_use && now.duration_since(entry.last_used) > threshold {
@@ -380,7 +378,7 @@ impl TexturePool {
     fn remove_texture(&mut self, texture_id: TextureId) {
         if let Some(texture) = self.textures.remove(&texture_id) {
             let key = texture.metadata.key;
-            
+
             // Remove from size group
             if let Some(size_group) = self.size_groups.get_mut(&key) {
                 size_group.retain(|&id| id != texture_id);
@@ -388,10 +386,11 @@ impl TexturePool {
                     self.size_groups.remove(&key);
                 }
             }
-            
+
             // Remove from LRU queue
-            self.lru_queue.retain(|entry| entry.texture_id != texture_id);
-            
+            self.lru_queue
+                .retain(|entry| entry.texture_id != texture_id);
+
             // Update statistics
             self.stats.total_textures = self.stats.total_textures.saturating_sub(1);
             if texture.metadata.in_use {
@@ -400,9 +399,10 @@ impl TexturePool {
                 self.stats.textures_available = self.stats.textures_available.saturating_sub(1);
             }
             self.stats.unique_sizes = self.size_groups.len();
-            self.stats.estimated_memory_usage = self.stats.estimated_memory_usage.saturating_sub(
-                Self::estimate_texture_memory(key)
-            );
+            self.stats.estimated_memory_usage = self
+                .stats
+                .estimated_memory_usage
+                .saturating_sub(Self::estimate_texture_memory(key));
         }
     }
 
@@ -415,7 +415,7 @@ impl TexturePool {
             PixelFormatEnum::RGB555 => 2,
             _ => 4, // Default to 4 bytes per pixel
         };
-        
+
         (key.width as usize) * (key.height as usize) * bytes_per_pixel
     }
 
@@ -432,7 +432,7 @@ impl TexturePool {
     /// Update the pool configuration
     pub fn set_config(&mut self, config: TexturePoolConfig) {
         self.config = config;
-        
+
         // Trigger cleanup if needed
         if self.should_cleanup() {
             self.cleanup_unused_textures();
@@ -489,7 +489,7 @@ mod tests {
 
     // Note: These tests would require SDL2 context to run, so they're mainly for documentation
     // In a real test environment, you would set up SDL2 context first
-    
+
     #[test]
     #[ignore = "Requires SDL2 context"]
     fn test_texture_pool_creation() {
@@ -502,7 +502,7 @@ mod tests {
         let key1 = TextureKey::new(100, 100, PixelFormatEnum::RGB24);
         let key2 = TextureKey::new(100, 100, PixelFormatEnum::RGB24);
         let key3 = TextureKey::new(200, 100, PixelFormatEnum::RGB24);
-        
+
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);
     }
@@ -512,7 +512,7 @@ mod tests {
         let id1 = TextureId(1);
         let id2 = TextureId(1);
         let id3 = TextureId(2);
-        
+
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
     }
@@ -529,8 +529,14 @@ mod tests {
     fn test_memory_estimation() {
         let key_rgb24 = TextureKey::new(100, 100, PixelFormatEnum::RGB24);
         let key_rgba32 = TextureKey::new(100, 100, PixelFormatEnum::RGBA32);
-        
-        assert_eq!(TexturePool::estimate_texture_memory(key_rgb24), 100 * 100 * 3);
-        assert_eq!(TexturePool::estimate_texture_memory(key_rgba32), 100 * 100 * 4);
+
+        assert_eq!(
+            TexturePool::estimate_texture_memory(key_rgb24),
+            100 * 100 * 3
+        );
+        assert_eq!(
+            TexturePool::estimate_texture_memory(key_rgba32),
+            100 * 100 * 4
+        );
     }
 }
