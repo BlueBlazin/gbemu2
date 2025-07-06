@@ -2,12 +2,14 @@ use crate::driver::sleep;
 use crate::emulator::{with_state, with_state_mut};
 use crate::interrupts;
 
+#[inline(always)]
 async fn memory_read(address: u16) -> u8 {
     let value = with_state(|state| state.read_memory(address));
     sleep(4).await; // Memory read takes 4 cycles
     value
 }
 
+#[inline(always)]
 async fn memory_write(address: u16, value: u8) {
     with_state_mut(|state| {
         state.write_memory(address, value);
@@ -15,6 +17,7 @@ async fn memory_write(address: u16, value: u8) {
     sleep(4).await; // Memory write takes 4 cycles
 }
 
+#[inline(always)]
 async fn fetch() -> u8 {
     let pc = with_state(|state| state.cpu.pc);
     let value = memory_read(pc).await;

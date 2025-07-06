@@ -55,7 +55,7 @@ impl Future for Sleep {
             Poll::Pending
         } else {
             let target_cycle = this.target_cycle.unwrap();
-            assert_eq!(
+            debug_assert_eq!(
                 current_cycle, target_cycle,
                 "Future polled on incorrect cycle. Target cycle {} != current cycle {}",
                 target_cycle, current_cycle

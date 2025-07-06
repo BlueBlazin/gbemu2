@@ -46,6 +46,11 @@ impl EmulationRunner {
         let mut last_debug_time = Instant::now();
         let mut fps_frame_count = 0u32;
 
+        // Timing measurement for optimization
+        let mut frame_time_sum = Duration::ZERO;
+        let mut frame_time_count = 0u32;
+        let mut last_timing_print = Instant::now();
+
         // Debug mode screenshot tracking
         let start_time = Instant::now();
         let mut screenshot_taken = false;
@@ -61,7 +66,13 @@ impl EmulationRunner {
             let frame_start = Instant::now();
 
             // Run emulation for one frame (1/60 second worth of cycles)
+            let frame_cycles_start = Instant::now();
             let cycles_executed = self.run_frame_cycles(&mut stats)?;
+            let frame_cycles_duration = frame_cycles_start.elapsed();
+            
+            // Track timing for optimization measurement
+            frame_time_sum += frame_cycles_duration;
+            frame_time_count += 1;
 
             // After running a frame's worth of cycles, we've completed one frame
             stats.frame_count += 1;
@@ -71,6 +82,23 @@ impl EmulationRunner {
             let frame_duration = frame_start.elapsed();
             if frame_duration < self.target_frame_duration {
                 std::thread::sleep(self.target_frame_duration - frame_duration);
+            }
+
+            // Print timing stats every 5 seconds (not debug mode specific)
+            let now = Instant::now();
+            if now.duration_since(last_timing_print) >= Duration::from_secs(5) {
+                if frame_time_count > 0 {
+                    let avg_frame_time = frame_time_sum / frame_time_count;
+                    println!(
+                        "Avg frame emulation time: {:.3}ms ({} frames sampled)",
+                        avg_frame_time.as_secs_f64() * 1000.0,
+                        frame_time_count
+                    );
+                    // Reset counters
+                    frame_time_sum = Duration::ZERO;
+                    frame_time_count = 0;
+                }
+                last_timing_print = now;
             }
 
             if debug_mode {

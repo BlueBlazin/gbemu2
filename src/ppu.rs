@@ -1,6 +1,7 @@
 use crate::driver::{Event, emit_event, sleep};
 use crate::emulator::{with_state, with_state_mut};
 use crate::interrupts::{request_lcd_interrupt, request_vblank_interrupt};
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy)]
 pub struct OamEntry {
@@ -21,23 +22,28 @@ impl OamEntry {
     }
 
     // Attribute flag getters
+    #[inline(always)]
     pub fn priority(&self) -> bool {
         (self.attributes & 0x80) != 0
     }
 
+    #[inline(always)]
     pub fn y_flip(&self) -> bool {
         (self.attributes & 0x40) != 0
     }
 
+    #[inline(always)]
     pub fn x_flip(&self) -> bool {
         (self.attributes & 0x20) != 0
     }
 
+    #[inline(always)]
     pub fn dmg_palette(&self) -> bool {
         (self.attributes & 0x10) != 0
     }
 
     // Attribute flag setters
+    #[inline(always)]
     pub fn set_priority(&mut self, value: bool) {
         if value {
             self.attributes |= 0x80;
@@ -46,6 +52,7 @@ impl OamEntry {
         }
     }
 
+    #[inline(always)]
     pub fn set_y_flip(&mut self, value: bool) {
         if value {
             self.attributes |= 0x40;
@@ -54,6 +61,7 @@ impl OamEntry {
         }
     }
 
+    #[inline(always)]
     pub fn set_x_flip(&mut self, value: bool) {
         if value {
             self.attributes |= 0x20;
@@ -62,6 +70,7 @@ impl OamEntry {
         }
     }
 
+    #[inline(always)]
     pub fn set_dmg_palette(&mut self, value: bool) {
         if value {
             self.attributes |= 0x10;
@@ -147,39 +156,48 @@ impl PpuState {
     }
 
     // LCDC flag getters (FF40)
+    #[inline(always)]
     pub fn lcd_enable(&self) -> bool {
         (self.lcdc & 0x80) != 0
     }
 
+    #[inline(always)]
     pub fn window_tile_map_area(&self) -> bool {
         (self.lcdc & 0x40) != 0 // 0 = 9800-9BFF, 1 = 9C00-9FFF
     }
 
+    #[inline(always)]
     pub fn window_enable(&self) -> bool {
         (self.lcdc & 0x20) != 0
     }
 
+    #[inline(always)]
     pub fn bg_window_tile_data_area(&self) -> bool {
         (self.lcdc & 0x10) != 0 // 0 = 8800-97FF, 1 = 8000-8FFF
     }
 
+    #[inline(always)]
     pub fn bg_tile_map_area(&self) -> bool {
         (self.lcdc & 0x08) != 0 // 0 = 9800-9BFF, 1 = 9C00-9FFF
     }
 
+    #[inline(always)]
     pub fn obj_size(&self) -> bool {
         (self.lcdc & 0x04) != 0 // 0 = 8x8, 1 = 8x16
     }
 
+    #[inline(always)]
     pub fn obj_enable(&self) -> bool {
         (self.lcdc & 0x02) != 0
     }
 
+    #[inline(always)]
     pub fn bg_window_enable(&self) -> bool {
         (self.lcdc & 0x01) != 0
     }
 
     // LCDC flag setters
+    #[inline(always)]
     pub fn set_lcdc_bit(&mut self, bit: u8, value: bool) {
         if value {
             self.lcdc |= 1 << bit;
@@ -189,27 +207,33 @@ impl PpuState {
     }
 
     // STAT flag getters (FF41)
+    #[inline(always)]
     pub fn lyc_int_select(&self) -> bool {
         (self.stat & 0x40) != 0
     }
 
+    #[inline(always)]
     pub fn mode_2_int_select(&self) -> bool {
         (self.stat & 0x20) != 0
     }
 
+    #[inline(always)]
     pub fn mode_1_int_select(&self) -> bool {
         (self.stat & 0x10) != 0
     }
 
+    #[inline(always)]
     pub fn mode_0_int_select(&self) -> bool {
         (self.stat & 0x08) != 0
     }
 
+    #[inline(always)]
     pub fn lyc_equals_ly(&self) -> bool {
         (self.stat & 0x04) != 0
     }
 
     // STAT flag setters
+    #[inline(always)]
     pub fn set_stat_bit(&mut self, bit: u8, value: bool) {
         if value {
             self.stat |= 1 << bit;
@@ -219,12 +243,14 @@ impl PpuState {
     }
 
     // Update LYC=LY flag
+    #[inline(always)]
     pub fn update_lyc_ly_flag(&mut self) {
         let lyc_ly = self.ly == self.lyc;
         self.set_stat_bit(2, lyc_ly);
     }
 
     // Set PPU mode and update STAT register
+    #[inline(always)]
     pub fn set_mode(&mut self, mode: u8) {
         self.ppu_mode = mode;
         self.stat = (self.stat & 0xFC) | (mode & 0x03);
@@ -257,6 +283,7 @@ impl PpuState {
     }
 
     // Tile addressing helpers
+    #[inline(always)]
     pub fn get_bg_tile_map_base(&self) -> u16 {
         if self.bg_tile_map_area() {
             0x9C00
@@ -265,6 +292,7 @@ impl PpuState {
         }
     }
 
+    #[inline(always)]
     pub fn get_window_tile_map_base(&self) -> u16 {
         if self.window_tile_map_area() {
             0x9C00
@@ -273,6 +301,7 @@ impl PpuState {
         }
     }
 
+    #[inline(always)]
     pub fn get_tile_data_base(&self) -> u16 {
         if self.bg_window_tile_data_area() {
             0x8000 // Unsigned addressing
@@ -281,6 +310,7 @@ impl PpuState {
         }
     }
 
+    #[inline(always)]
     pub fn uses_signed_tile_addressing(&self) -> bool {
         !self.bg_window_tile_data_area()
     }
@@ -298,15 +328,18 @@ impl PpuState {
     }
 
     // Object tile address (always uses $8000 method)
+    #[inline(always)]
     pub fn get_object_tile_address(&self, tile_index: u8) -> u16 {
         0x8000 + (tile_index as u16 * 16)
     }
 
     // Palette color lookup
+    #[inline(always)]
     pub fn get_bg_color(&self, color_index: u8) -> u8 {
         (self.bgp >> (color_index * 2)) & 0x03
     }
 
+    #[inline(always)]
     pub fn get_obj_color(&self, palette: bool, color_index: u8) -> u8 {
         if color_index == 0 {
             return 0; // Color 0 is transparent for objects
@@ -316,28 +349,33 @@ impl PpuState {
     }
 
     // Window visibility check
+    #[inline(always)]
     pub fn is_window_visible(&self) -> bool {
         // On real DMG hardware the window is gated by the master BG/WIN enable bit (LCDC.0)
         self.bg_window_enable() && self.window_enable() && self.wx <= 166 && self.wy <= 143
     }
 
     // Check if window should be rendered on current scanline
+    #[inline(always)]
     pub fn should_render_window(&self) -> bool {
         self.is_window_visible() && self.ly >= self.wy
     }
 
     // Get effective window X position (WX - 7)
+    #[inline(always)]
     pub fn get_window_x(&self) -> i16 {
         (self.wx as i16) - 7
     }
 
     // Framebuffer access methods
+    #[inline(always)]
     pub fn set_pixel(&mut self, x: usize, y: usize, color: u8) {
         if x < 160 && y < 144 {
             self.framebuffer[y][x] = color & 0x03; // Ensure only 2 bits (0-3)
         }
     }
 
+    #[inline(always)]
     pub fn get_pixel(&self, x: usize, y: usize) -> u8 {
         if x < 160 && y < 144 {
             self.framebuffer[y][x]
@@ -346,11 +384,13 @@ impl PpuState {
         }
     }
 
+    #[inline(always)]
     pub fn clear_framebuffer(&mut self) {
         self.framebuffer = [[0; 160]; 144];
     }
 
     // Get reference to framebuffer for external rendering
+    #[inline(always)]
     pub fn get_framebuffer(&self) -> &[[u8; 160]; 144] {
         &self.framebuffer
     }
@@ -433,36 +473,37 @@ impl PixelData {
 
 #[derive(Debug)]
 pub struct PixelFifo {
-    pub pixels: Vec<PixelData>,
+    pub pixels: VecDeque<PixelData>,
 }
 
 impl PixelFifo {
     pub fn new() -> Self {
         Self {
-            pixels: Vec::with_capacity(16),
+            pixels: VecDeque::with_capacity(16),
         }
     }
 
+    #[inline(always)]
     pub fn push(&mut self, pixel: PixelData) {
-        self.pixels.push(pixel);
+        self.pixels.push_back(pixel);
     }
 
+    #[inline(always)]
     pub fn pop(&mut self) -> Option<PixelData> {
-        if self.pixels.is_empty() {
-            None
-        } else {
-            Some(self.pixels.remove(0))
-        }
+        self.pixels.pop_front()
     }
 
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.pixels.len()
     }
 
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.pixels.is_empty()
     }
 
+    #[inline(always)]
     pub fn clear(&mut self) {
         self.pixels.clear();
     }
@@ -1059,7 +1100,7 @@ fn fetch_and_mix_sprite(render_state: &mut PpuRenderState, obj_index_on_line: us
             render_state.obj_fifo.push(PixelData::new());
         }
 
-        let dst = &mut render_state.obj_fifo.pixels[fifo_index];
+        let dst = render_state.obj_fifo.pixels.get_mut(fifo_index).unwrap();
 
         let new_pixel = PixelData::obj_pixel(
             colour,
