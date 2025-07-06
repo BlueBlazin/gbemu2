@@ -204,28 +204,30 @@ impl SdlSystem {
                     match keycode {
                         // Joypad button mappings - no interrupt on key release
                         Keycode::A => {
-                            with_state_mut(|state| state.joypad.set_button(JoypadButton::A, false))
+                            with_state_mut(|state| state.joypad.set_button(JoypadButton::A, false));
                         }
                         Keycode::S => {
-                            with_state_mut(|state| state.joypad.set_button(JoypadButton::B, false))
+                            with_state_mut(|state| state.joypad.set_button(JoypadButton::B, false));
                         }
                         Keycode::Up => {
-                            with_state_mut(|state| state.joypad.set_button(JoypadButton::Up, false))
+                            with_state_mut(|state| {
+                                state.joypad.set_button(JoypadButton::Up, false)
+                            });
                         }
                         Keycode::Down => with_state_mut(|state| {
-                            state.joypad.set_button(JoypadButton::Down, false)
+                            state.joypad.set_button(JoypadButton::Down, false);
                         }),
                         Keycode::Left => with_state_mut(|state| {
-                            state.joypad.set_button(JoypadButton::Left, false)
+                            state.joypad.set_button(JoypadButton::Left, false);
                         }),
                         Keycode::Right => with_state_mut(|state| {
-                            state.joypad.set_button(JoypadButton::Right, false)
+                            state.joypad.set_button(JoypadButton::Right, false);
                         }),
                         Keycode::Return => with_state_mut(|state| {
-                            state.joypad.set_button(JoypadButton::Start, false)
+                            state.joypad.set_button(JoypadButton::Start, false);
                         }),
                         Keycode::Space => with_state_mut(|state| {
-                            state.joypad.set_button(JoypadButton::Select, false)
+                            state.joypad.set_button(JoypadButton::Select, false);
                         }),
                         _ => {}
                     }
@@ -600,6 +602,7 @@ impl Renderer {
     }
 
     /// Get a mutable reference to the texture for a window
+    #[allow(dead_code)]
     fn get_window_texture_mut(
         &mut self,
         window_type: DebugWindowType,
@@ -622,6 +625,7 @@ impl Renderer {
     }
 
     /// Get a reference to the texture for a window
+    #[allow(dead_code)]
     fn get_window_texture(
         &mut self,
         window_type: DebugWindowType,
@@ -927,12 +931,7 @@ impl Renderer {
             .copy(
                 pooled_texture.texture(),
                 None,
-                Some(Rect::new(
-                    0,
-                    0,
-                    TILEMAP_PIXEL_WIDTH,
-                    TILEMAP_PIXEL_HEIGHT,
-                )),
+                Some(Rect::new(0, 0, TILEMAP_PIXEL_WIDTH, TILEMAP_PIXEL_HEIGHT)),
             )
             .map_err(|e| e.to_string())?;
         window.canvas.present();

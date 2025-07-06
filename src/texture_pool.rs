@@ -411,8 +411,7 @@ impl TexturePool {
         let bytes_per_pixel = match key.format {
             PixelFormatEnum::RGB24 => 3,
             PixelFormatEnum::RGBA32 => 4,
-            PixelFormatEnum::RGB565 => 2,
-            PixelFormatEnum::RGB555 => 2,
+            PixelFormatEnum::RGB555 | PixelFormatEnum::RGB565 => 2,
             _ => 4, // Default to 4 bytes per pixel
         };
 

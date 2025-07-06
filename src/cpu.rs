@@ -435,7 +435,7 @@ async fn execute_ld_hl_sp_e() {
 
 // Helper function for 8-bit addition with flag calculation
 fn add_8bit(a: u8, b: u8, carry: bool) -> (u8, bool, bool, bool) {
-    let carry_val = if carry { 1 } else { 0 };
+    let carry_val = u8::from(carry);
     let result = a.wrapping_add(b).wrapping_add(carry_val);
     let full_result = (a as u16) + (b as u16) + (carry_val as u16);
 
@@ -448,7 +448,7 @@ fn add_8bit(a: u8, b: u8, carry: bool) -> (u8, bool, bool, bool) {
 
 // Helper function for 8-bit subtraction with flag calculation
 fn sub_8bit(a: u8, b: u8, carry: bool) -> (u8, bool, bool, bool) {
-    let carry_val = if carry { 1 } else { 0 };
+    let carry_val = u8::from(carry);
     let result = a.wrapping_sub(b).wrapping_sub(carry_val);
 
     let zero = result == 0;
@@ -1350,7 +1350,7 @@ async fn execute_rlca() {
     with_state_mut(|state| {
         let a = state.cpu.a;
         let bit7 = (a & 0x80) != 0;
-        let result = (a << 1) | if bit7 { 1 } else { 0 };
+        let result = (a << 1) | u8::from(bit7);
 
         state.cpu.a = result;
         // RLCA sets Z=0, N=0, H=0, C=old_bit7
@@ -1379,7 +1379,7 @@ async fn execute_rla() {
         let a = state.cpu.a;
         let old_carry = state.cpu.flag_c();
         let bit7 = (a & 0x80) != 0;
-        let result = (a << 1) | if old_carry { 1 } else { 0 };
+        let result = (a << 1) | u8::from(old_carry);
 
         state.cpu.a = result;
         // RLA sets Z=0, N=0, H=0, C=old_bit7
@@ -1405,7 +1405,7 @@ async fn execute_rra() {
 // Helper functions for CB-prefixed rotate/shift operations
 fn rlc_8bit(value: u8) -> (u8, bool, bool) {
     let bit7 = (value & 0x80) != 0;
-    let result = (value << 1) | if bit7 { 1 } else { 0 };
+    let result = (value << 1) | u8::from(bit7);
     let zero = result == 0;
     (result, zero, bit7)
 }
@@ -1419,7 +1419,7 @@ fn rrc_8bit(value: u8) -> (u8, bool, bool) {
 
 fn rl_8bit(value: u8, carry_in: bool) -> (u8, bool, bool) {
     let bit7 = (value & 0x80) != 0;
-    let result = (value << 1) | if carry_in { 1 } else { 0 };
+    let result = (value << 1) | u8::from(carry_in);
     let zero = result == 0;
     (result, zero, bit7)
 }

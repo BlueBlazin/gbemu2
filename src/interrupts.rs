@@ -195,12 +195,14 @@ pub fn request_timer_interrupt() {
     });
 }
 
+#[allow(dead_code)]
 pub fn request_serial_interrupt() {
     with_state_mut(|state| {
         state.interrupts.request_interrupt(InterruptType::Serial);
     });
 }
 
+#[allow(dead_code)]
 pub fn request_joypad_interrupt() {
     with_state_mut(|state| {
         state.interrupts.request_interrupt(InterruptType::Joypad);

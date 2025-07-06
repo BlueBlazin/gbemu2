@@ -568,8 +568,11 @@ impl PixelFetcher {
 #[derive(Debug, Clone)]
 pub struct ObjectData {
     pub x: u8,
+    #[allow(dead_code)]
     pub y: u8,
+    #[allow(dead_code)]
     pub tile_index: u8,
+    #[allow(dead_code)]
     pub attributes: u8,
     pub oam_index: u8,
 }

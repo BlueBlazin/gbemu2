@@ -73,7 +73,7 @@ impl NoiseChannel {
         };
         self.volume = self.initial_volume;
 
-        self.lfsr = 0x7FFF
+        self.lfsr = 0x7FFF;
     }
 
     fn calculate_period(&self) -> u32 {

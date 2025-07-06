@@ -404,7 +404,7 @@ impl EmulatorState {
             crate::ppu::WX_REGISTER => self.ppu.wx = value,
             // APU registers
             crate::apu::NR10_REGISTER..=crate::apu::NR52_REGISTER => {
-                crate::apu::write_apu_register(address, value, &mut self.apu)
+                crate::apu::write_apu_register(address, value, &mut self.apu);
             }
             _ => {
                 if (0xFF00..=0xFF7F).contains(&address) {
