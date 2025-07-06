@@ -76,8 +76,11 @@ impl NoiseChannel {
         self.lfsr = 0x7FFF;
     }
 
+    /// LFSR period in *CPU cycles*.
+    /// Formula: period = divisor << clock_shift
+    #[inline]
     fn calculate_period(&self) -> u32 {
-        (NOISE_DIVISORS[self.clock_divider as usize] << self.clock_shift) * 16
+        NOISE_DIVISORS[self.clock_divider as usize] << self.clock_shift
     }
 
     pub fn clock_period(&mut self) {

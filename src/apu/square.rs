@@ -79,9 +79,7 @@ impl SquareChannel {
             self.length_timer = 64; // Max length for square channels
         }
 
-        // Reset period timer but preserve the low 2 bits
-        let old_low_bits = self.period_timer & 0x03;
-        self.period_timer = ((2048 - self.period) * 4) | old_low_bits;
+        self.period_timer = (2048 - self.period) * 4; // low bits forced to 0
 
         // Reset envelope
         self.envelope_timer = if self.envelope_pace == 0 {

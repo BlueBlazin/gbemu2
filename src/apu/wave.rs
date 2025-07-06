@@ -131,10 +131,17 @@ impl WaveChannel {
     }
 
     pub fn update_dac(&mut self, nr30_value: u8) {
-        self.dac_enabled = (nr30_value & 0x80) != 0;
-        if !self.dac_enabled {
-            self.enabled = false;
+        let new_dac_enabled = (nr30_value & 0x80) != 0;
+
+        // Turning the DAC OFF forces the output to 0 V and clears the internal
+        // 4-bit sample latch on the DMG.  If we don’t replicate that, the next
+        // trigger starts with stale data and the first note can vanish.
+        if !new_dac_enabled && self.dac_enabled {
+            self.enabled = false; // channel goes silent
+            self.sample_buffer = 0; // hardware clears the latch here
         }
+
+        self.dac_enabled = new_dac_enabled;
     }
 
     pub fn read_wave_ram(&self, address: u16) -> u8 {
