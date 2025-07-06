@@ -13,6 +13,7 @@ pub struct EmulationRunner {
     driver: Driver,
     renderer: Renderer,
     target_frame_duration: Duration,
+    cycle_correction: isize, // Track cycle overshoot/undershoot from previous frames
 }
 
 pub struct EmulationStats {
@@ -27,6 +28,7 @@ impl EmulationRunner {
             driver,
             renderer,
             target_frame_duration: Duration::from_secs_f64(1.0 / 60.0),
+            cycle_correction: 0,
         }
     }
 
@@ -111,11 +113,13 @@ impl EmulationRunner {
     }
 
     fn run_frame_cycles(&mut self, stats: &mut EmulationStats) -> Result<usize, String> {
-        let mut remaining_cycles = CYCLES_PER_FRAME;
+        // Calculate target cycles for this frame, accounting for previous overshoot/undershoot
+        let target_cycles = (CYCLES_PER_FRAME as isize - self.cycle_correction) as usize;
+        let mut remaining_cycles = target_cycles;
         let mut total_cycles_this_frame = 0;
 
-        // Keep running until MaxCycles event. MaxCycles event doesn't guarantee CYCLES_PER_FRAME
-        // number of cycles were run but rather that running any more cycles would've crossed that boundry.
+        // Keep running until MaxCycles event. MaxCycles event doesn't guarantee target_cycles
+        // number of cycles were run but rather that running any more cycles would've crossed that boundary.
         loop {
             // Run for the remaining cycles
             let result = self.driver.run_for(remaining_cycles);
@@ -142,6 +146,10 @@ impl EmulationRunner {
                     }
                 }
                 Event::MaxCycles => {
+                    // Calculate how many cycles we overshot or undershot by
+                    let overshoot = total_cycles_this_frame as isize - CYCLES_PER_FRAME as isize;
+                    self.cycle_correction = overshoot;
+                    
                     // We've executed all requested cycles
                     return Ok(total_cycles_this_frame);
                 }
@@ -150,7 +158,7 @@ impl EmulationRunner {
     }
 
     fn print_debug_info(&self, frame_cycles: usize) {
-        println!("Debug: Frame cycles: {}", frame_cycles);
+        println!("Debug: Frame cycles: {} (correction: {})", frame_cycles, self.cycle_correction);
 
         // Print PPU state
         let (ly, mode, lcdc) =
