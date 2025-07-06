@@ -269,7 +269,7 @@ async fn execute_ld_hl_inc_a() {
 }
 
 // LD r, r' - Load register to register
-async fn execute_ld_r_r(opcode: u8) {
+fn execute_ld_r_r(opcode: u8) {
     // LD r, r' - 1 M-cycle
     // Opcode format: 01xxxyyy where xxx = destination, yyy = source
     let dest_bits = (opcode >> 3) & 0b111;
@@ -784,7 +784,7 @@ async fn execute_cp_n() {
     });
 }
 
-async fn execute_inc_r(opcode: u8) {
+fn execute_inc_r(opcode: u8) {
     // INC r - 1 M-cycle total
     // Decode which register based on opcode bits 5-3
     let reg_bits = (opcode >> 3) & 0b111;
@@ -839,7 +839,7 @@ async fn execute_inc_hl() {
     });
 }
 
-async fn execute_dec_r(opcode: u8) {
+fn execute_dec_r(opcode: u8) {
     // DEC r - 1 M-cycle total
     // Decode which register based on opcode bits 5-3
     let reg_bits = (opcode >> 3) & 0b111;
@@ -1098,7 +1098,7 @@ async fn execute_xor_n() {
     });
 }
 
-async fn execute_ccf() {
+fn execute_ccf() {
     // CCF - 1 M-cycle total
     // Complement carry flag, clear N and H flags
     with_state_mut(|state| {
@@ -1109,7 +1109,7 @@ async fn execute_ccf() {
     });
 }
 
-async fn execute_scf() {
+fn execute_scf() {
     // SCF - 1 M-cycle total
     // Set carry flag, clear N and H flags
     with_state_mut(|state| {
@@ -1119,7 +1119,7 @@ async fn execute_scf() {
     });
 }
 
-async fn execute_daa() {
+fn execute_daa() {
     // DAA - 1 M-cycle total
     // Decimal adjust accumulator.
     // This instruction adjusts the A register to a BCD value after an ADD or SUB.
@@ -1211,7 +1211,7 @@ async fn execute_daa() {
 //     });
 // }
 
-async fn execute_cpl() {
+fn execute_cpl() {
     // CPL - 1 M-cycle total
     // Complement accumulator, set N and H flags
     with_state_mut(|state| {
@@ -1344,7 +1344,7 @@ async fn execute_add_sp_e() {
     });
 }
 
-async fn execute_rlca() {
+fn execute_rlca() {
     // RLCA - 1 M-cycle total
     // Rotate left circular accumulator
     with_state_mut(|state| {
@@ -1358,7 +1358,7 @@ async fn execute_rlca() {
     });
 }
 
-async fn execute_rrca() {
+fn execute_rrca() {
     // RRCA - 1 M-cycle total
     // Rotate right circular accumulator
     with_state_mut(|state| {
@@ -1372,7 +1372,7 @@ async fn execute_rrca() {
     });
 }
 
-async fn execute_rla() {
+fn execute_rla() {
     // RLA - 1 M-cycle total
     // Rotate left accumulator through carry
     with_state_mut(|state| {
@@ -1387,7 +1387,7 @@ async fn execute_rla() {
     });
 }
 
-async fn execute_rra() {
+fn execute_rra() {
     // RRA - 1 M-cycle total
     // Rotate right accumulator through carry
     with_state_mut(|state| {
@@ -2086,7 +2086,7 @@ async fn execute_jp_nn() {
     });
 }
 
-async fn execute_jp_hl() {
+fn execute_jp_hl() {
     // JP HL - 1 M-cycle total
     // Just set PC to HL value
     let hl = with_state(|state| state.cpu.hl());
@@ -2337,13 +2337,13 @@ async fn execute_reti() {
     interrupts::execute_reti();
 }
 
-async fn execute_ei() {
+fn execute_ei() {
     // EI - 1 M-cycle
     // Enable interrupts with delay
     interrupts::execute_ei();
 }
 
-async fn execute_di() {
+fn execute_di() {
     // DI - 1 M-cycle
     // Disable interrupts immediately
     interrupts::execute_di();
@@ -2404,7 +2404,7 @@ async fn execute_cb_instruction() {
 }
 
 // System control instructions
-async fn execute_nop() {
+fn execute_nop() {
     // NOP - 1 M-cycle total
     // Does nothing but consume one cycle (already consumed by fetch)
 }
@@ -2478,7 +2478,7 @@ async fn decode_and_execute(opcode: u8) {
         // HALT instruction (special case)
         0x76 => execute_halt().await,
         // LD r, r' instructions (remaining 0x40-0x7F)
-        0x40..=0x7F => execute_ld_r_r(opcode).await,
+        0x40..=0x7F => execute_ld_r_r(opcode),
         // 8-bit load instructions
         0x36 => execute_ld_hl_n().await,     // LD (HL), n
         0x0A => execute_ld_a_bc().await,     // LD A, (BC)
@@ -2521,30 +2521,30 @@ async fn decode_and_execute(opcode: u8) {
         0xB8..=0xBF => execute_cp_r(opcode).await,  // CP r (includes CP (HL) at 0xBE)
         0xFE => execute_cp_n().await,               // CP n
         // Increment/Decrement instructions
-        0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x3C => execute_inc_r(opcode).await, // INC r
-        0x34 => execute_inc_hl().await,                                                // INC (HL)
-        0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x3D => execute_dec_r(opcode).await, // DEC r
-        0x35 => execute_dec_hl().await,                                                // DEC (HL)
+        0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x3C => execute_inc_r(opcode), // INC r
+        0x34 => execute_inc_hl().await,                                          // INC (HL)
+        0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x3D => execute_dec_r(opcode), // DEC r
+        0x35 => execute_dec_hl().await,                                          // DEC (HL)
         // Flag manipulation instructions
-        0x3F => execute_ccf().await, // CCF
-        0x37 => execute_scf().await, // SCF
-        0x27 => execute_daa().await, // DAA
-        0x2F => execute_cpl().await, // CPL
+        0x3F => execute_ccf(), // CCF
+        0x37 => execute_scf(), // SCF
+        0x27 => execute_daa(), // DAA
+        0x2F => execute_cpl(), // CPL
         // 16-bit arithmetic instructions
         0x03 | 0x13 | 0x23 | 0x33 => execute_inc_rr(opcode).await, // INC rr
         0x0B | 0x1B | 0x2B | 0x3B => execute_dec_rr(opcode).await, // DEC rr
         0x09 | 0x19 | 0x29 | 0x39 => execute_add_hl_rr(opcode).await, // ADD HL,rr
         0xE8 => execute_add_sp_e().await,                          // ADD SP,e
         // Rotate/shift instructions (accumulator)
-        0x07 => execute_rlca().await, // RLCA
-        0x0F => execute_rrca().await, // RRCA
-        0x17 => execute_rla().await,  // RLA
-        0x1F => execute_rra().await,  // RRA
+        0x07 => execute_rlca(), // RLCA
+        0x0F => execute_rrca(), // RRCA
+        0x17 => execute_rla(),  // RLA
+        0x1F => execute_rra(),  // RRA
         // CB-prefixed instructions
         0xCB => execute_cb_instruction().await, // CB prefix
         // Control flow instructions
         0xC3 => execute_jp_nn().await, // JP nn
-        0xE9 => execute_jp_hl().await, // JP HL
+        0xE9 => execute_jp_hl(),       // JP HL
         0xC2 | 0xCA | 0xD2 | 0xDA => execute_jp_cc_nn(opcode).await, // JP cc, nn
         0x18 => execute_jr_e().await,  // JR e
         0x20 | 0x28 | 0x30 | 0x38 => execute_jr_cc_e(opcode).await, // JR cc, e
@@ -2555,10 +2555,10 @@ async fn decode_and_execute(opcode: u8) {
         0xD9 => execute_reti().await,  // RETI
         0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => execute_rst_n(opcode).await, // RST n
         // Interrupt control
-        0xF3 => execute_di().await, // DI
-        0xFB => execute_ei().await, // EI
+        0xF3 => execute_di(), // DI
+        0xFB => execute_ei(), // EI
         // System control
-        0x00 => execute_nop().await,  // NOP
+        0x00 => execute_nop(),        // NOP
         0x10 => execute_stop().await, // STOP
         _ => {
             panic!(

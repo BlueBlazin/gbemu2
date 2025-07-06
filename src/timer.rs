@@ -175,14 +175,14 @@ impl TimerState {
 pub async fn timer() {
     loop {
         // Process one M-cycle of timer operation
-        step_timer().await;
+        step_timer();
 
         // Sleep for one M-cycle (4 cycles)
         sleep(4).await;
     }
 }
 
-async fn step_timer() {
+fn step_timer() {
     // Check if in STOP mode
     let stop_mode = with_state(|state| state.timer.stop_mode);
     if stop_mode {
