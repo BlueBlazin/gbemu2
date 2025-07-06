@@ -112,6 +112,10 @@ impl NoiseChannel {
     }
 
     pub fn clock_envelope(&mut self) {
+        if self.envelope_pace == 0 {
+            return;
+        }
+
         if self.envelope_timer > 0 {
             self.envelope_timer -= 1;
         }
