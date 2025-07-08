@@ -1,8 +1,10 @@
 use crate::cartridge::mbc0::Mbc0;
 use crate::cartridge::mbc1::Mbc1;
+use crate::cartridge::mbc3::Mbc3;
 
 pub mod mbc0;
 pub mod mbc1;
+pub mod mbc3;
 
 // Cartridge header constants
 pub const CARTRIDGE_TYPE_ADDR: u16 = 0x147;
@@ -139,6 +141,11 @@ impl Cartridge {
             CartridgeType::Mbc1 | CartridgeType::Mbc1Ram | CartridgeType::Mbc1RamBattery => {
                 Box::new(Mbc1::new(rom_data, info)?)
             }
+            CartridgeType::Mbc3
+            | CartridgeType::Mbc3Ram
+            | CartridgeType::Mbc3RamBattery
+            | CartridgeType::Mbc3TimerBattery
+            | CartridgeType::Mbc3TimerRamBattery => Box::new(Mbc3::new(rom_data, info)),
             _ => {
                 return Err(format!(
                     "Unsupported cartridge type: {:?}",

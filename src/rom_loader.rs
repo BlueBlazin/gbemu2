@@ -43,9 +43,14 @@ impl RomLoader {
             CartridgeType::RomOnly
             | CartridgeType::Mbc1
             | CartridgeType::Mbc1Ram
-            | CartridgeType::Mbc1RamBattery => Ok(()),
+            | CartridgeType::Mbc1RamBattery
+            | CartridgeType::Mbc3
+            | CartridgeType::Mbc3Ram
+            | CartridgeType::Mbc3RamBattery
+            | CartridgeType::Mbc3TimerBattery
+            | CartridgeType::Mbc3TimerRamBattery => Ok(()),
             unsupported => Err(format!(
-                "Unsupported cartridge type: {:?}. Currently only ROM-only (MBC0) and MBC1 cartridges are supported.",
+                "Unsupported cartridge type: {:?}",
                 unsupported
             )),
         }
