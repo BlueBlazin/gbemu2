@@ -1,5 +1,5 @@
 use futures::task::Waker;
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
@@ -24,9 +24,9 @@ pub struct ExecutionResult {
 }
 
 thread_local! {
-    static CURRENT_CYCLE: RefCell<usize> = const { RefCell::new(0) };
-    static NEXT_WAKE_CYCLE: RefCell<Option<usize>> = const { RefCell::new(None) };
-    static PENDING_EVENT: RefCell<Option<Event>> = const { RefCell::new(None) };
+    static CURRENT_CYCLE: Cell<usize> = const { Cell::new(0) };
+    static NEXT_WAKE_CYCLE: Cell<Option<usize>> = const { Cell::new(None) };
+    static PENDING_EVENT: Cell<Option<Event>> = const { Cell::new(None) };
 }
 
 #[derive(Debug)]
@@ -42,14 +42,14 @@ impl Future for Sleep {
         let this = self.get_mut();
 
         // Get the current cycle.
-        let current_cycle = CURRENT_CYCLE.with(|cell| *cell.borrow());
+        let current_cycle = CURRENT_CYCLE.with(|cell| cell.get());
 
         if this.target_cycle.is_none() {
             this.target_cycle = Some(current_cycle + this.cycles);
 
             // Write the target cycle to thread_local variable for driver to read.
             NEXT_WAKE_CYCLE.with(|cell| {
-                *cell.borrow_mut() = Some(this.target_cycle.unwrap());
+                cell.set(Some(this.target_cycle.unwrap()));
             });
 
             Poll::Pending
@@ -76,7 +76,7 @@ pub fn sleep(cycles: usize) -> Sleep {
 // Function for components to emit events
 pub fn emit_event(event: Event) {
     PENDING_EVENT.with(|cell| {
-        *cell.borrow_mut() = Some(event);
+        cell.set(Some(event));
     });
 }
 
@@ -97,7 +97,7 @@ impl Driver {
         Self {
             clock: 0,
             futures_queue: BTreeMap::new(),
-            events_queue: VecDeque::new(),
+            events_queue: VecDeque::with_capacity(100),
         }
     }
 
@@ -107,7 +107,7 @@ impl Driver {
     {
         self.futures_queue
             .entry(self.clock)
-            .or_default()
+            .or_insert(Vec::with_capacity(4))
             .push(Box::pin(future));
     }
 
@@ -141,7 +141,7 @@ impl Driver {
 
             // Reflect change in current cycle
             CURRENT_CYCLE.with(|cell| {
-                *cell.borrow_mut() = self.clock;
+                cell.set(self.clock);
             });
 
             // Get futures to poll during this cycle
@@ -151,13 +151,13 @@ impl Driver {
             for mut future in futures {
                 // Reset next wake cycle
                 NEXT_WAKE_CYCLE.with(|cell| {
-                    *cell.borrow_mut() = None;
+                    cell.set(None);
                 });
 
                 // If not done, re-queue
                 if future.as_mut().poll(&mut cx).is_pending() {
                     let wake_cycle = NEXT_WAKE_CYCLE
-                        .with(|cell| *cell.borrow())
+                        .with(|cell| cell.get())
                         .unwrap_or(self.clock + 1);
 
                     self.futures_queue
@@ -167,11 +167,11 @@ impl Driver {
                 }
 
                 // Check for events after each future poll
-                let pending_event = PENDING_EVENT.with(|cell| *cell.borrow());
+                let pending_event = PENDING_EVENT.with(|cell| cell.get());
                 if let Some(event) = pending_event {
                     // Clear the event and add to queue
                     PENDING_EVENT.with(|cell| {
-                        *cell.borrow_mut() = None;
+                        cell.set(None);
                     });
                     self.events_queue.push_back(event);
                 }
@@ -202,7 +202,7 @@ impl Driver {
 
             // Reflect change in current cycle.
             CURRENT_CYCLE.with(|cell| {
-                *cell.borrow_mut() = self.clock;
+                cell.set(self.clock);
             });
 
             // Get futures to poll during this cycle.
@@ -213,13 +213,13 @@ impl Driver {
             for mut future in futures {
                 // Reset next wake cycle.
                 NEXT_WAKE_CYCLE.with(|cell| {
-                    *cell.borrow_mut() = None;
+                    cell.set(None);
                 });
 
                 // If not done, re-queue.
                 if future.as_mut().poll(&mut cx).is_pending() {
                     let wake_cycle = NEXT_WAKE_CYCLE
-                        .with(|cell| *cell.borrow())
+                        .with(|cell| cell.get())
                         .unwrap_or(self.clock + 1);
 
                     self.futures_queue
