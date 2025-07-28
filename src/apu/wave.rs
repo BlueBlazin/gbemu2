@@ -30,7 +30,7 @@ impl Default for WaveChannel {
 }
 
 impl WaveChannel {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             enabled: false,
             dac_enabled: false,

@@ -35,7 +35,7 @@ impl Default for NoiseChannel {
 }
 
 impl NoiseChannel {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             enabled: false,
             dac_enabled: false,

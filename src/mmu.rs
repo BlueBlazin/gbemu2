@@ -28,7 +28,7 @@ impl Default for MMU {
 }
 
 impl MMU {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         let mut io_registers = [0xFF; 0x80];
 
         // Set boot values for I/O registers

@@ -37,7 +37,7 @@ impl Default for TimerState {
 }
 
 impl TimerState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             div: 0xAB,              // DIV = $AB (boot value)
             tima: 0x00,             // TIMA = $00 (boot value)

@@ -33,7 +33,7 @@ impl Default for InterruptState {
 }
 
 impl InterruptState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             ime: false,      // IME starts disabled
             ie: 0x00,        // IE = $00 (boot value)

@@ -18,7 +18,7 @@ impl Default for OamEntry {
 }
 
 impl OamEntry {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             y: 0,
             x: 0,
@@ -142,7 +142,7 @@ impl Default for PpuState {
 }
 
 impl PpuState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             lcdc: 0x91, // Default LCDC value at boot
             stat: 0x85, // Default STAT value

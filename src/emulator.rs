@@ -4,7 +4,7 @@ use crate::{apu, cpu, dma, ppu, timer};
 use std::cell::RefCell;
 
 thread_local! {
-    static STATE: RefCell<EmulatorState> = RefCell::new(EmulatorState::new());
+    static STATE: RefCell<EmulatorState> = const { RefCell::new(EmulatorState::new()) };
 }
 
 pub fn with_state<F, R>(f: F) -> R

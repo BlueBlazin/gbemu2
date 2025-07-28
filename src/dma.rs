@@ -18,7 +18,7 @@ impl Default for DmaState {
 }
 
 impl DmaState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             source_address: 0xFF00, // DMA = $FF (boot value)
             bytes_transferred: 0,

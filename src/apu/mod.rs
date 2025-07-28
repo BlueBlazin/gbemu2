@@ -287,7 +287,7 @@ impl Default for HpFilter {
 
 impl HpFilter {
     /// Create a new filter with zeroed state.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             y_prev: 0.0,
             x_prev: 0.0,
@@ -358,7 +358,7 @@ impl Default for ApuState {
 }
 
 impl ApuState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             master_enable: false,
             master_volume_left: 0,
@@ -379,7 +379,7 @@ impl ApuState {
             ch4: NoiseChannel::new(),
             frame_sequencer_step: 0,
             frame_sequencer_timer: 0,
-            audio_buffer: Vec::with_capacity(BUFFER_SIZE),
+            audio_buffer: Vec::new(),
             sample_accumulator: 0.0,
             sample_count: 0,
             hp_filter: HpFilter::new(),

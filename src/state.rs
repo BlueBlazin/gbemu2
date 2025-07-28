@@ -34,7 +34,7 @@ impl Default for RenderDirtyFlags {
 }
 
 impl RenderDirtyFlags {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             // Start with all windows marked as dirty to ensure initial render
             bg_tilemap_0: true,
@@ -118,7 +118,7 @@ impl Default for CpuState {
 }
 
 impl CpuState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             a: 0x01,    // A = $01
             f: 0xB0,    // F = Z=1 N=0 H=0 C=0 (Z flag set, others clear)
@@ -261,7 +261,7 @@ impl Default for EmulatorState {
 }
 
 impl EmulatorState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             cpu: CpuState::new(),
             mmu: MMU::new(),

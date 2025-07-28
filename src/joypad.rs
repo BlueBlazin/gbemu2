@@ -37,7 +37,7 @@ impl Default for JoypadState {
 }
 
 impl JoypadState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             up: false,
             down: false,
